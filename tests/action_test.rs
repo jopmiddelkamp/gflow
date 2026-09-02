@@ -1,4 +1,4 @@
-use bflow::action::{validate_branch_name, Action};
+use gflow::action::{validate_branch_name, Action};
 
 #[test]
 fn start_actions_return_true() {

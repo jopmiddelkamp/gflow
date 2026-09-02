@@ -1,5 +1,5 @@
 [package]
-name = "bflow"
+name = "gflow"
 version = "3.5.0"
 edition = "2021"
 

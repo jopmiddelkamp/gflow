@@ -117,7 +117,7 @@ A single business rule change requires modifying multiple files. The knowledge i
 The same validation, calculation, or business decision implemented in more than one location.
 
 ### Magic Strings
-A branch name, config key, or remedy sentence written out in more than one place. `bflow.branch.main` is a `const`; the `gh auth login` remedy is a `const`; branch names come from `SemVer` methods, never `format!`.
+A branch name, config key, or remedy sentence written out in more than one place. `gflow.branch.main` is a `const`; the `gh auth login` remedy is a `const`; branch names come from `SemVer` methods, never `format!`.
 
 ### Copy-Paste with Minor Variations
 Nearly identical blocks of code where the differences are incidental, not intentional.

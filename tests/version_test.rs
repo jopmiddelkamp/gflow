@@ -1,5 +1,5 @@
-use bflow::git::branch::BranchType;
-use bflow::version::SemVer;
+use gflow::git::branch::BranchType;
+use gflow::version::SemVer;
 
 #[test]
 fn parse_semver() {
@@ -191,7 +191,7 @@ fn generated_branch_names_round_trip_through_parse() {
 fn a_clean_release_outranks_its_own_release_candidates() {
     // decisions.md: SemVer::Ord is hand-implemented precisely so a pre-release
     // sorts BELOW its own release — a derived Ord on Option would invert this and
-    // make `bflow finish` pick an RC tag as the latest release.
+    // make `gflow finish` pick an RC tag as the latest release.
     let release = SemVer::parse("v2.5.0").unwrap();
     let rc = SemVer::parse("v2.5.0-rc.4").unwrap();
 
@@ -203,7 +203,7 @@ fn a_clean_release_outranks_its_own_release_candidates() {
 
 #[test]
 fn finish_branch_names_flatten_slashes() {
-    use bflow::version::finish_branch_name;
+    use gflow::version::finish_branch_name;
     assert_eq!(finish_branch_name("release/1.2.0", "main"), "finish/release-1.2.0-into-main");
     assert_eq!(finish_branch_name("release/1.2.0", "develop"), "finish/release-1.2.0-into-develop");
     assert_eq!(finish_branch_name("hotfix/1.1.1", "main"), "finish/hotfix-1.1.1-into-main");
@@ -213,7 +213,7 @@ fn finish_branch_names_flatten_slashes() {
 
 #[test]
 fn finish_branch_source_round_trips_every_produced_name() {
-    use bflow::version::{finish_branch_name, finish_branch_source};
+    use gflow::version::{finish_branch_name, finish_branch_source};
     // Finish branches are only ever built from release/hotfix sources
     // (ensure_finish_branch callers); the parser recovers exactly those.
     for (source, target) in [
@@ -230,7 +230,7 @@ fn finish_branch_source_round_trips_every_produced_name() {
 
 #[test]
 fn finish_branch_source_rejects_non_finish_names() {
-    use bflow::version::finish_branch_source;
+    use gflow::version::finish_branch_source;
     assert_eq!(finish_branch_source("release/1.2.0"), None);
     assert_eq!(finish_branch_source("develop"), None);
     assert_eq!(finish_branch_source("finish/feature-x-into-develop"), None);

@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, develop]
     tags: ['v*']
   pull_request:
-    branches: [main, develop]
+    branches: [master, develop]
 
 jobs:
   test:
@@ -33,13 +33,13 @@ jobs:
         include:
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: bflow-macos-x86_64
+            artifact: gflow-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: bflow-macos-aarch64
+            artifact: gflow-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: bflow-windows-x86_64
+            artifact: gflow-windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -51,9 +51,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp target/${{ matrix.target }}/release/bflow.exe ${{ matrix.artifact }}.exe
+            cp target/${{ matrix.target }}/release/gflow.exe ${{ matrix.artifact }}.exe
           else
-            cp target/${{ matrix.target }}/release/bflow ${{ matrix.artifact }}
+            cp target/${{ matrix.target }}/release/gflow ${{ matrix.artifact }}
             chmod +x ${{ matrix.artifact }}
           fi
       - name: Upload artifact
@@ -76,9 +76,9 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/bflow-macos-x86_64/bflow-macos-x86_64
-            artifacts/bflow-macos-aarch64/bflow-macos-aarch64
-            artifacts/bflow-windows-x86_64/bflow-windows-x86_64.exe
+            artifacts/gflow-macos-x86_64/gflow-macos-x86_64
+            artifacts/gflow-macos-aarch64/gflow-macos-aarch64
+            artifacts/gflow-windows-x86_64/gflow-windows-x86_64.exe
 
   update-homebrew:
     needs: create-release
@@ -94,50 +94,50 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          SHA_ARM=$(sha256sum artifacts/bflow-macos-aarch64/bflow-macos-aarch64 | cut -d' ' -f1)
-          SHA_X86=$(sha256sum artifacts/bflow-macos-x86_64/bflow-macos-x86_64 | cut -d' ' -f1)
+          SHA_ARM=$(sha256sum artifacts/gflow-macos-aarch64/gflow-macos-aarch64 | cut -d' ' -f1)
+          SHA_X86=$(sha256sum artifacts/gflow-macos-x86_64/gflow-macos-x86_64 | cut -d' ' -f1)
 
           echo "Version: $VERSION"
           echo "SHA256 ARM: $SHA_ARM"
           echo "SHA256 x86: $SHA_X86"
 
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/Beans-BV/homebrew-tap.git tap
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jopmiddelkamp/homebrew-tap.git tap
           cd tap
 
-          cat > Formula/bflow.rb << 'FORMULA'
-          class Bflow < Formula
-            desc "Beans GitFlow - customized gitflow workflow CLI"
-            homepage "https://github.com/Beans-BV/beans-gitflow"
+          cat > Formula/gflow.rb << 'FORMULA'
+          class Gflow < Formula
+            desc "gflow - a customized gitflow workflow CLI"
+            homepage "https://github.com/jopmiddelkamp/gflow"
             version "VERSION_PLACEHOLDER"
             license "Apache-2.0"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/Beans-BV/beans-gitflow/releases/download/v#{version}/bflow-macos-aarch64"
+                url "https://github.com/jopmiddelkamp/gflow/releases/download/v#{version}/gflow-macos-aarch64"
                 sha256 "SHA_ARM_PLACEHOLDER"
               else
-                url "https://github.com/Beans-BV/beans-gitflow/releases/download/v#{version}/bflow-macos-x86_64"
+                url "https://github.com/jopmiddelkamp/gflow/releases/download/v#{version}/gflow-macos-x86_64"
                 sha256 "SHA_X86_PLACEHOLDER"
               end
             end
 
             def install
-              bin.install stable.url.split("/").last => "bflow"
+              bin.install stable.url.split("/").last => "gflow"
             end
           end
           FORMULA
 
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" Formula/bflow.rb
-          sed -i "s/SHA_ARM_PLACEHOLDER/${SHA_ARM}/g" Formula/bflow.rb
-          sed -i "s/SHA_X86_PLACEHOLDER/${SHA_X86}/g" Formula/bflow.rb
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" Formula/gflow.rb
+          sed -i "s/SHA_ARM_PLACEHOLDER/${SHA_ARM}/g" Formula/gflow.rb
+          sed -i "s/SHA_X86_PLACEHOLDER/${SHA_X86}/g" Formula/gflow.rb
           # Remove leading whitespace from heredoc
-          sed -i 's/^          //' Formula/bflow.rb
+          sed -i 's/^          //' Formula/gflow.rb
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/bflow.rb
+          git add Formula/gflow.rb
           git diff --cached --quiet && echo "Formula already up to date" || {
-            git commit -m "chore: update bflow to ${VERSION}"
+            git commit -m "chore: update gflow to ${VERSION}"
             git push
           }
 
@@ -150,7 +150,7 @@ jobs:
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
-          name: bflow-windows-x86_64
+          name: gflow-windows-x86_64
           path: artifacts
 
       - name: Update checksum and publish
@@ -159,7 +159,7 @@ jobs:
         shell: powershell
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          $checksum = (Get-FileHash -Path "artifacts\bflow-windows-x86_64.exe" -Algorithm SHA256).Hash.ToLower()
+          $checksum = (Get-FileHash -Path "artifacts\gflow-windows-x86_64.exe" -Algorithm SHA256).Hash.ToLower()
 
           Write-Host "Version: $version"
           Write-Host "Checksum: $checksum"
@@ -171,8 +171,8 @@ jobs:
 
           # Pack from the chocolatey directory so tools/ is included
           Push-Location "packaging\chocolatey"
-          choco pack "bflow.nuspec" --version $version
+          choco pack "gflow.nuspec" --version $version
           Pop-Location
 
           # Push to Chocolatey community repo
-          choco push "packaging\chocolatey\bflow.$version.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+          choco push "packaging\chocolatey\gflow.$version.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY

@@ -40,7 +40,7 @@ pub fn parse(contents: &str) -> Result<RepoConfig, String> {
         }
         let (key, value) = line
             .split_once('=')
-            .ok_or_else(|| format!("Malformed line in .bflow/config: {line}"))?;
+            .ok_or_else(|| format!("Malformed line in .gflow/config: {line}"))?;
         let value = value.trim();
         match key.trim() {
             "mode" => match value {
@@ -48,7 +48,7 @@ pub fn parse(contents: &str) -> Result<RepoConfig, String> {
                 "protected" => config.mode = Mode::Protected,
                 _ => {
                     return Err(format!(
-                        "Invalid mode '{value}' in .bflow/config. Use 'mode=free' or 'mode=protected'."
+                        "Invalid mode '{value}' in .gflow/config. Use 'mode=free' or 'mode=protected'."
                     ));
                 }
             },
@@ -57,7 +57,7 @@ pub fn parse(contents: &str) -> Result<RepoConfig, String> {
                 "patch" => config.bump_strategy = BumpStrategy::Patch,
                 _ => {
                     return Err(format!(
-                        "Invalid bump-strategy '{value}' in .bflow/config. Use 'bump-strategy=rc' or 'bump-strategy=patch'."
+                        "Invalid bump-strategy '{value}' in .gflow/config. Use 'bump-strategy=rc' or 'bump-strategy=patch'."
                     ));
                 }
             },
@@ -66,7 +66,7 @@ pub fn parse(contents: &str) -> Result<RepoConfig, String> {
                 "false" => config.keep_release_branches = false,
                 _ => {
                     return Err(format!(
-                        "Invalid keep-release-branches '{value}' in .bflow/config. Use 'true' or 'false'."
+                        "Invalid keep-release-branches '{value}' in .gflow/config. Use 'true' or 'false'."
                     ));
                 }
             },
@@ -78,10 +78,10 @@ pub fn parse(contents: &str) -> Result<RepoConfig, String> {
 }
 
 pub const NOT_INITIALISED: &str =
-    "bflow is not initialised for this repository. Run 'bflow init' (interactive) and commit .bflow/config.";
+    "gflow is not initialised for this repository. Run 'gflow init' (interactive) and commit .gflow/config.";
 
 fn config_path(repo_root: &Path) -> std::path::PathBuf {
-    repo_root.join(".bflow").join("config")
+    repo_root.join(".gflow").join("config")
 }
 
 pub fn exists(repo_root: &Path) -> bool {
@@ -114,7 +114,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_dir() -> PathBuf {
-        crate::test_support::tmp_dir("bflow-repo-config-test")
+        crate::test_support::tmp_dir("gflow-repo-config-test")
     }
 
     #[test]
@@ -175,7 +175,7 @@ keep-release-branches=true
     #[test]
     fn a_line_without_equals_is_malformed() {
         let err = parse("mode\n").unwrap_err();
-        assert!(err.contains("Malformed line in .bflow/config"), "got: {err}");
+        assert!(err.contains("Malformed line in .gflow/config"), "got: {err}");
     }
 
     #[test]
@@ -208,10 +208,10 @@ keep-release-branches=true
     #[test]
     fn load_round_trips_through_the_filesystem() {
         let dir = tmp_dir();
-        let bflow_dir = dir.join(".bflow");
-        fs::create_dir_all(&bflow_dir).unwrap();
+        let gflow_dir = dir.join(".gflow");
+        fs::create_dir_all(&gflow_dir).unwrap();
         fs::write(
-            bflow_dir.join("config"),
+            gflow_dir.join("config"),
             "mode=protected\nkeep-release-branches=true\n",
         )
         .unwrap();
@@ -230,7 +230,7 @@ keep-release-branches=true
     }
 
     #[test]
-    fn load_on_a_root_with_no_bflow_dir_is_not_initialised() {
+    fn load_on_a_root_with_no_gflow_dir_is_not_initialised() {
         let dir = tmp_dir();
         assert!(!exists(&dir));
         assert_eq!(load(&dir).unwrap_err(), NOT_INITIALISED);
@@ -243,7 +243,7 @@ keep-release-branches=true
         let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: true, bump_strategy: BumpStrategy::Patch };
         write(&dir, &cfg).unwrap();
         assert!(exists(&dir));
-        assert_eq!(fs::read_to_string(dir.join(".bflow").join("config")).unwrap(),
+        assert_eq!(fs::read_to_string(dir.join(".gflow").join("config")).unwrap(),
             "mode=protected\nkeep-release-branches=true\nbump-strategy=patch\n");
         assert_eq!(load(&dir).unwrap(), cfg);
         fs::remove_dir_all(&dir).ok();
@@ -253,7 +253,7 @@ keep-release-branches=true
     fn write_serialises_the_defaults() {
         let dir = tmp_dir();
         write(&dir, &RepoConfig::default()).unwrap();
-        assert_eq!(fs::read_to_string(dir.join(".bflow").join("config")).unwrap(),
+        assert_eq!(fs::read_to_string(dir.join(".gflow").join("config")).unwrap(),
             "mode=free\nkeep-release-branches=false\nbump-strategy=rc\n");
         fs::remove_dir_all(&dir).ok();
     }
@@ -271,7 +271,7 @@ keep-release-branches=true
     #[test]
     fn load_fails_when_config_is_a_directory() {
         let dir = tmp_dir();
-        fs::create_dir_all(dir.join(".bflow").join("config")).unwrap();
+        fs::create_dir_all(dir.join(".gflow").join("config")).unwrap();
         let err = load(&dir).unwrap_err();
         assert!(err.starts_with("Failed to read"), "got: {err}");
         fs::remove_dir_all(&dir).ok();

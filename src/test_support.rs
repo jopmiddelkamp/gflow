@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Create a unique, empty temp directory. `prefix` names the test area (e.g.
-/// `bflow-state-test`); pid + a process-wide counter make the path unique
+/// `gflow-state-test`); pid + a process-wide counter make the path unique
 /// across parallel tests without any extra dependency.
 pub(crate) fn tmp_dir(prefix: &str) -> PathBuf {
     let n = TMP_COUNTER.fetch_add(1, Ordering::SeqCst);

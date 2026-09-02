@@ -3,13 +3,13 @@ mod common;
 use std::path::PathBuf;
 
 use common::{MockEditor, MockGit, MockHosting, MockPrompter};
-use bflow::action::Action;
-use bflow::cli::{Commands, StartKind, StartOptions};
-use bflow::git::branch::BranchType;
-use bflow::lifecycle::{resolve_action_with_state, run};
-use bflow::repo_config::{Mode, RepoConfig};
-use bflow::state::{FinishKind, FinishState};
-use bflow::worktree::{WorktreeConfig, WorktreeEnv};
+use gflow::action::Action;
+use gflow::cli::{Commands, StartKind, StartOptions};
+use gflow::git::branch::BranchType;
+use gflow::lifecycle::{resolve_action_with_state, run};
+use gflow::repo_config::{Mode, RepoConfig};
+use gflow::state::{FinishKind, FinishState};
+use gflow::worktree::{WorktreeConfig, WorktreeEnv};
 use common::MockWorktreeSetup;
 
 // The lifecycle (reject → stash → write-state → dispatch → clear/pop) used to
@@ -25,9 +25,9 @@ fn finish_cmd() -> Option<Commands> {
 }
 
 /// A MockGit standing on release/2.5.0 with one RC tag and a fake `.git` dir,
-/// ready for a `bflow finish`.
+/// ready for a `gflow finish`.
 fn release_git() -> MockGit {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "release/2.5.0".to_string();
     git.tags_on_branch = vec!["v2.5.0-rc.1".to_string()];
     git.existing_local_branches.insert("release/2.5.0".to_string());
@@ -58,7 +58,7 @@ fn wrongly_squash_checked_feature_git(name: &str) -> MockGit {
 
 fn merged_feature_hosting() -> MockHosting {
     let mut hosting = MockHosting::new();
-    hosting.merged_pr = Some(bflow::hosting::MergedPr {
+    hosting.merged_pr = Some(gflow::hosting::MergedPr {
         url: "https://github.com/o/r/pull/9".to_string(),
         head_sha: "abc".to_string(),
         merge_commit_sha: "merge-of-abc".to_string(),
@@ -75,7 +75,7 @@ fn run_with(git: &MockGit, hosting: &MockHosting, command: Option<Commands>) -> 
 
 #[test]
 fn finish_without_the_flag_refuses_a_wrongly_completed_pr() {
-    let git = wrongly_squash_checked_feature_git("bflow-accept-mt-refuse");
+    let git = wrongly_squash_checked_feature_git("gflow-accept-mt-refuse");
     let hosting = merged_feature_hosting();
 
     let err = run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false })).unwrap_err();
@@ -85,7 +85,7 @@ fn finish_without_the_flag_refuses_a_wrongly_completed_pr() {
 
 #[test]
 fn finish_with_the_flag_accepts_a_wrongly_completed_pr() {
-    let git = wrongly_squash_checked_feature_git("bflow-accept-mt-accept");
+    let git = wrongly_squash_checked_feature_git("gflow-accept-mt-accept");
     let hosting = merged_feature_hosting();
 
     run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: true })).unwrap();
@@ -96,14 +96,14 @@ fn finish_with_the_flag_accepts_a_wrongly_completed_pr() {
 
 #[test]
 fn sync_forwards_the_accept_flag_to_the_landing_check() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-accept-mt-sync");
+    let mut git = MockGit::with_tmp_git_dir("gflow-accept-mt-sync");
     git.current_branch = "release/1.1.0".to_string();
     git.branch_shas.insert("release/1.1.0".to_string(), "relsha".to_string());
     git.parent_counts.insert("mc1".to_string(), 1);
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release/1.1.0".to_string(), "develop".to_string()),
-        bflow::hosting::LandedPr { url: "u".to_string(), head_sha: "relsha".to_string(), merge_commit_sha: "mc1".to_string() },
+        gflow::hosting::LandedPr { url: "u".to_string(), head_sha: "relsha".to_string(), merge_commit_sha: "mc1".to_string() },
     );
     git.ancestors.insert(("mc1".to_string(), "origin/develop".to_string()));
     let prompter = MockPrompter::new();
@@ -352,7 +352,7 @@ fn finish_with_explicit_base_on_a_finish_branch_does_not_switch() {
 
 #[test]
 fn dirty_start_stashes_before_mutating_and_pops_on_success() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.working_tree_clean = false;
     let start = Some(Commands::Start { kind: StartKind::Feature {
@@ -364,7 +364,7 @@ fn dirty_start_stashes_before_mutating_and_pops_on_success() {
     run_lifecycle(&git, start).unwrap();
 
     let calls = git.calls();
-    let stash_idx = calls.iter().position(|c| c.starts_with("stash_push_with_message:bflow-finish:develop:"))
+    let stash_idx = calls.iter().position(|c| c.starts_with("stash_push_with_message:gflow-finish:develop:"))
         .expect("dirty start must stash");
     let create_idx = calls.iter().position(|c| c.starts_with("create_branch:feature/login:"))
         .expect("branch must be created");
@@ -427,7 +427,7 @@ fn abort_clears_state_without_touching_the_repo() {
     git.mid_merge = true; // abort must work even mid-merge
     FinishState {
         kind: FinishKind::Release, major: 2, minor: 5, patch: 0,
-        started_at: "1".to_string(), stash_message: Some("bflow-finish:release/2.5.0:1".to_string()),
+        started_at: "1".to_string(), stash_message: Some("gflow-finish:release/2.5.0:1".to_string()),
     }.save(&git.git_dir).unwrap();
 
     run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false })).unwrap();
@@ -489,7 +489,7 @@ fn abort_is_accepted_from_any_branch_including_unrecognized_ones() {
 // `worktree_active`, which decides whether a WorktreeContext is built.
 
 fn worktree_lifecycle_git() -> MockGit {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.branches_matching = vec!["release/2.5.0".to_string()];
     git
@@ -548,7 +548,7 @@ fn no_worktree_re_arms_the_gate_it_waived() {
 
 #[test]
 fn start_release_dispatches_to_the_release_flow() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.tags = vec!["v2.4.0".to_string()];
 
@@ -581,7 +581,7 @@ fn start_release_fix_dispatches_from_the_release_branch() {
 
 #[test]
 fn start_hotfix_fix_dispatches_and_creates_the_hotfix_branch() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "main".to_string();
     git.tags = vec!["v2.5.0".to_string()];
 
@@ -601,7 +601,7 @@ fn start_hotfix_fix_dispatches_and_creates_the_hotfix_branch() {
 
 #[test]
 fn finish_release_fix_dispatches_and_targets_its_release_branch() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "release-fix/2.5.0/db-index".to_string();
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new();
@@ -615,7 +615,7 @@ fn finish_release_fix_dispatches_and_targets_its_release_branch() {
 
 #[test]
 fn finish_release_chore_dispatches_and_targets_its_release_branch() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "release-chore/2.5.0/set-version".to_string();
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new();
@@ -629,7 +629,7 @@ fn finish_release_chore_dispatches_and_targets_its_release_branch() {
 
 #[test]
 fn finish_hotfix_fix_dispatches_and_targets_its_hotfix_branch() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "hotfix-fix/2.5.1/npe".to_string();
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new();
@@ -670,7 +670,7 @@ fn sync_dispatches_and_returns_to_the_release_branch() {
 // --- Hotfix finish identity (the release half was covered; this half was not) ---
 
 fn hotfix_git() -> MockGit {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "hotfix/2.5.1".to_string();
     git.existing_local_branches.insert("hotfix/2.5.1".to_string());
     git.existing_remote_branches.insert("hotfix/2.5.1".to_string());
@@ -740,7 +740,7 @@ fn abort_without_state_succeeds_and_does_nothing() {
 fn failed_stash_pop_warns_and_still_reports_the_flow_result() {
     // Warn-and-continue: the work already succeeded, so a failed pop must not turn
     // a successful start into an error — the user is told where their changes are.
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.working_tree_clean = false;
     git.fail_stash_pop = true;
@@ -760,7 +760,7 @@ fn failed_stash_pop_warns_and_still_reports_the_flow_result() {
 fn stash_lookup_failure_warns_and_never_pops_blindly() {
     // decisions.md, Stash Policy: never a blind `stash pop`. If the message lookup
     // fails we warn — popping stash@{0} could destroy a stash the user pushed.
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.working_tree_clean = false;
     git.fail_find_stash = true;
@@ -786,7 +786,7 @@ fn failed_release_finish_keeps_the_stash_for_resume() {
     git.fail_nth_merge = Some(1);
     FinishState {
         kind: FinishKind::Release, major: 2, minor: 5, patch: 0,
-        started_at: "1".to_string(), stash_message: Some("bflow-finish:release/2.5.0:1".to_string()),
+        started_at: "1".to_string(), stash_message: Some("gflow-finish:release/2.5.0:1".to_string()),
     }.save(&git.git_dir).unwrap();
 
     let result = run_lifecycle(&git, finish_cmd());
@@ -843,7 +843,7 @@ fn explicit_base_rejected_even_when_resume_state_exists() {
 fn finish_work_branch_dispatches_with_its_resolved_pr_template() {
     // The work-branch finish is the only arm that resolves a PR template before
     // dispatch — flows never probe the filesystem themselves.
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "feature/login".to_string();
     git.remote_branches = vec!["develop".to_string()];
     let hosting = MockHosting::new();
@@ -876,13 +876,13 @@ fn a_stash_that_vanished_before_the_pop_is_not_an_error() {
     FinishState {
         kind: FinishKind::Release, major: 2, minor: 5, patch: 0,
         started_at: "1".to_string(),
-        stash_message: Some("bflow-finish:release/2.5.0:1".to_string()), // never actually stashed
+        stash_message: Some("gflow-finish:release/2.5.0:1".to_string()), // never actually stashed
     }.save(&git.git_dir).unwrap();
 
     run_lifecycle(&git, finish_cmd()).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"find_stash_by_message:bflow-finish:release/2.5.0:1".to_string()),
+    assert!(calls.contains(&"find_stash_by_message:gflow-finish:release/2.5.0:1".to_string()),
         "calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("stash_pop_ref:")),
         "nothing to pop — and never a blind pop; calls: {calls:?}");
@@ -890,7 +890,7 @@ fn a_stash_that_vanished_before_the_pop_is_not_an_error() {
 
 #[test]
 fn no_subcommand_falls_through_to_the_interactive_menu() {
-    // Bare `bflow` has no command and no resume state: the branch-type menu
+    // Bare `gflow` has no command and no resume state: the branch-type menu
     // decides, and whatever it returns is the Action that runs.
     let prompter = MockPrompter::scripted(&[5]); // "start release" on develop
 
@@ -902,7 +902,7 @@ fn no_subcommand_falls_through_to_the_interactive_menu() {
 
 #[test]
 fn a_worktree_mode_start_release_still_stashes_a_dirty_tree() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.tags = vec!["v2.4.0".to_string()];
     git.working_tree_clean = false;
@@ -919,7 +919,7 @@ fn a_worktree_mode_start_release_still_stashes_a_dirty_tree() {
 
 #[test]
 fn a_worktree_mode_start_release_with_no_worktree_stays_in_the_current_tree() {
-    let mut git = MockGit::with_tmp_git_dir("bflow-lifecycle-test");
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.tags = vec!["v2.4.0".to_string()];
 

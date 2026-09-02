@@ -7,12 +7,12 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use bflow::action::validate_branch_name;
-use bflow::editor::Editor;
-use bflow::git::{CliOutput, CommandRunner, Git};
-use bflow::hosting::{CliRunner, HostingPlatform, PrBody};
-use bflow::prompt::Prompter;
-use bflow::version_script::VersionScript;
+use gflow::action::validate_branch_name;
+use gflow::editor::Editor;
+use gflow::git::{CliOutput, CommandRunner, Git};
+use gflow::hosting::{CliRunner, HostingPlatform, PrBody};
+use gflow::prompt::Prompter;
+use gflow::version_script::VersionScript;
 
 const MERGE_BASE: &str = "abc123";
 const REMOVED_WORKTREE_PATH: &str = "/repos/beans-gitflow-feature-x";
@@ -511,9 +511,9 @@ pub struct MockHosting {
     pub copy_text_error: Option<String>,
     pub pr_url: String,
     /// What `merged_pr` reports (defaults to no merged PR).
-    pub merged_pr: Option<bflow::hosting::MergedPr>,
+    pub merged_pr: Option<gflow::hosting::MergedPr>,
     /// What `merged_pr_to` reports, keyed by (head, base) (defaults to none landed).
-    pub merged_prs_to: HashMap<(String, String), bflow::hosting::LandedPr>,
+    pub merged_prs_to: HashMap<(String, String), gflow::hosting::LandedPr>,
 }
 
 impl MockHosting {
@@ -545,7 +545,7 @@ impl HostingPlatform for MockHosting {
         Ok(self.pr_url.clone())
     }
 
-    fn merged_pr(&self, head: &str) -> Result<Option<bflow::hosting::MergedPr>, String> {
+    fn merged_pr(&self, head: &str) -> Result<Option<gflow::hosting::MergedPr>, String> {
         self.calls.borrow_mut().push(format!("merged_pr:{head}"));
         Ok(self.merged_pr.clone())
     }
@@ -555,7 +555,7 @@ impl HostingPlatform for MockHosting {
         Ok(self.open_prs_to.get(&(head.to_string(), base.to_string())).cloned())
     }
 
-    fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<bflow::hosting::LandedPr>, String> {
+    fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<gflow::hosting::LandedPr>, String> {
         self.calls.borrow_mut().push(format!("merged_pr_to:{head}:{base}"));
         Ok(self.merged_prs_to.get(&(head.to_string(), base.to_string())).cloned())
     }
@@ -598,7 +598,7 @@ impl MockWorktreeSetup {
     }
 }
 
-impl bflow::worktree_setup::WorktreeSetup for MockWorktreeSetup {
+impl gflow::worktree_setup::WorktreeSetup for MockWorktreeSetup {
     fn run_command(&self, worktree: &Path, main_root: &Path, command: &str) -> Result<(), String> {
         self.calls.borrow_mut().push(format!("run:{}:{}:{command}", worktree.display(), main_root.display()));
         if self.fail.contains(command) { Err("boom".to_string()) } else { Ok(()) }

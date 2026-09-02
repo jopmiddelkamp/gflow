@@ -1,8 +1,8 @@
 mod common;
 
 use common::{MockGit, MockHosting};
-use bflow::flows::finish_hotfix::finish_hotfix;
-use bflow::repo_config::{Mode, RepoConfig};
+use gflow::flows::finish_hotfix::finish_hotfix;
+use gflow::repo_config::{Mode, RepoConfig};
 
 /// Configure a MockGit for a "fresh start" hotfix finish: nothing is yet merged,
 /// no tags exist, source branch still exists locally and remotely.
@@ -235,7 +235,7 @@ fn finish_hotfix_aborts_on_release_merge_conflict_without_deleting_hotfix() {
     assert!(result.is_err(), "expected merge conflict to surface");
     let err = result.unwrap_err();
     assert!(err.contains("release/1.2.0"), "error should name the conflicting branch; got: {err}");
-    assert!(err.contains("bflow finish"), "error should tell user to re-run bflow finish; got: {err}");
+    assert!(err.contains("gflow finish"), "error should tell user to re-run gflow finish; got: {err}");
 
     let calls = git.calls();
     // Main + develop + tag must already be done before the conflict.
@@ -421,7 +421,7 @@ fn finish_hotfix_main_merge_conflict_names_source_branch_to_switch_back() {
         "the commit step must come before git switch, which fails mid-merge; got: {err}");
     assert!(err.contains("git switch hotfix/1.0.1"),
         "main conflict should tell user to switch back to the hotfix branch; got: {err}");
-    assert!(err.contains("bflow finish"), "should mention re-running bflow finish; got: {err}");
+    assert!(err.contains("gflow finish"), "should mention re-running gflow finish; got: {err}");
 }
 
 #[test]
@@ -441,8 +441,8 @@ fn protected_cfg(keep: bool) -> RepoConfig {
     RepoConfig { mode: Mode::Protected, keep_release_branches: keep, ..RepoConfig::default() }
 }
 
-fn landed(head_sha: &str, merge_commit_sha: &str) -> bflow::hosting::LandedPr {
-    bflow::hosting::LandedPr {
+fn landed(head_sha: &str, merge_commit_sha: &str) -> gflow::hosting::LandedPr {
+    gflow::hosting::LandedPr {
         url: "https://github.com/org/repo/pull/1".to_string(),
         head_sha: head_sha.to_string(),
         merge_commit_sha: merge_commit_sha.to_string(),
@@ -1146,8 +1146,8 @@ fn protected_hotfix_content_present_legs_complete_without_prs() {
 fn hotfix_cleanup_with_unlanded_tip_keeps_the_branch() {
     // Last-resort guard behind the strict legs (mirror of the release side):
     // completing with an unlanded tip must warn and keep the branch.
-    use bflow::flows::finish_hotfix::finish_hotfix_cleanup;
-    use bflow::version::SemVer;
+    use gflow::flows::finish_hotfix::finish_hotfix_cleanup;
+    use gflow::version::SemVer;
     let git = MockGit::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 

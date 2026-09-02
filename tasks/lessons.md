@@ -60,16 +60,16 @@ Satisfy the gate by marking the proof test `#[ignore = "red proof …"]` and
 showing it fail with `--ignored`; never widen scope silently to please a hook.
 Say what the gate required and what you did about it.
 
-## `.claude/skills/bflow/SKILL.md` is upper-case in git
+## `.claude/skills/gflow/SKILL.md` is upper-case in git
 
 **Correction (2026-08-18):** on this case-insensitive filesystem `git add
-.claude/skills/bflow/skill.md` silently stages nothing — git tracks the file
+.claude/skills/gflow/skill.md` silently stages nothing — git tracks the file
 as `SKILL.md`. Four docs commits in a row "included" skill edits that never
 landed until `git status` showed the file still modified.
 
 **Rule:** always `git add` the path exactly as `git ls-files` prints it, and
 read `git status --short` before claiming a commit contains a file.
 
-- 2026-09-01: Edited `.claude/skills/bflow/skill.md` twice before remembering
+- 2026-09-01: Edited `.claude/skills/gflow/skill.md` twice before remembering
   the skill-sync-reminder skill must run whenever any skill file changes.
   Trigger it on EVERY skill-file edit, in the same turn as the edit.

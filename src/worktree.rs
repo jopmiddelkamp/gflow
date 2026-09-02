@@ -6,8 +6,8 @@ use crate::git::{Git, Result};
 use crate::prompt::Prompter;
 
 /// Friendly editor names offered by the interactive wizard, mapped to the launcher
-/// command bflow stores and runs. Any editor with a `<cmd> <path>` CLI works — this
-/// is just convenience; `bflow worktree editor <cmd>` accepts any command.
+/// command gflow stores and runs. Any editor with a `<cmd> <path>` CLI works — this
+/// is just convenience; `gflow worktree editor <cmd>` accepts any command.
 pub const EDITOR_PRESETS: &[(&str, &str)] = &[
     ("VS Code", "code"),
     ("Cursor", "cursor"),
@@ -18,9 +18,9 @@ pub const EDITOR_PRESETS: &[(&str, &str)] = &[
     ("WebStorm", "webstorm"),
 ];
 
-const KEY_ENABLED: &str = "bflow.worktree.enabled";
-const KEY_EDITOR: &str = "bflow.worktree.editor";
-const KEY_PATH: &str = "bflow.worktree.path";
+const KEY_ENABLED: &str = "gflow.worktree.enabled";
+const KEY_EDITOR: &str = "gflow.worktree.editor";
+const KEY_PATH: &str = "gflow.worktree.path";
 
 fn scope_label(local: bool) -> &'static str {
     if local { "local (this repo)" } else { "global (all repos)" }
@@ -32,7 +32,7 @@ fn editor_disabled(editor: &str) -> bool {
     editor.is_empty() || editor.eq_ignore_ascii_case("none")
 }
 
-/// User configuration for the optional worktree flow, read from `bflow.worktree.*`
+/// User configuration for the optional worktree flow, read from `gflow.worktree.*`
 /// git config keys.
 #[derive(Debug)]
 pub struct WorktreeConfig {
@@ -42,7 +42,7 @@ pub struct WorktreeConfig {
 }
 
 impl WorktreeConfig {
-    /// Load the `bflow.worktree.*` keys. Absent keys fall back to defaults
+    /// Load the `gflow.worktree.*` keys. Absent keys fall back to defaults
     /// (disabled, editor `code`, no custom base path). Values are trimmed —
     /// stray whitespace in git config would otherwise break `Command::new`
     /// (e.g. editor `"code "`) or produce oddly named directories.
@@ -170,7 +170,7 @@ fn run_setup(ctx: &WorktreeContext<'_>, main_root: &Path, worktree: &Path, cmds:
 }
 
 // ---------------------------------------------------------------------------
-// `bflow worktree` configuration commands
+// `gflow worktree` configuration commands
 // ---------------------------------------------------------------------------
 
 /// Turn the worktree flow on or off.
@@ -220,7 +220,7 @@ pub fn show_status(git: &dyn Git) -> Result<()> {
         None => println!("  path    : (default — the repository's parent directory)"),
     }
     if !cfg.enabled {
-        println!("\nIt's off. Turn it on with 'bflow worktree enable' or 'bflow worktree'.");
+        println!("\nIt's off. Turn it on with 'gflow worktree enable' or 'gflow worktree'.");
     }
     Ok(())
 }
@@ -266,6 +266,6 @@ pub fn wizard(git: &dyn Git, prompter: &dyn Prompter, local: bool) -> Result<()>
         set_path(git, &path, local)?;
     }
 
-    println!("\nDone. Your next 'bflow start' opens work in a worktree.");
+    println!("\nDone. Your next 'gflow start' opens work in a worktree.");
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Cross-cutting lifecycle of a bflow invocation: resume lookup, action
+//! Cross-cutting lifecycle of a gflow invocation: resume lookup, action
 //! resolution, the reject → stash → write-state → dispatch ordering contract,
 //! state clearing, and the three-way stash-pop policy (see decisions.md,
 //! State & Crash-Safety). Lives in the library — not `main.rs` — so the
@@ -63,9 +63,9 @@ pub fn run(
 
     // Resume context: an in-progress finish only resumes when you are standing on
     // the source branch that started it. From develop/main/feature branches there
-    // is no resume — bflow behaves normally — so a stalled finish never hijacks
+    // is no resume — gflow behaves normally — so a stalled finish never hijacks
     // other work. To continue after a conflict you switch back to the source
-    // branch and re-run 'bflow finish'.
+    // branch and re-run 'gflow finish'.
     let resume_state = match identity {
         Some((kind, major, minor, patch)) => FinishState::load(&git_dir, kind, major, minor, patch)?,
         None => None,
@@ -126,7 +126,7 @@ pub fn run(
         resume_state.as_ref().and_then(|s| s.stash_message.clone())
     } else if needs_stash {
         println!("Stashing uncommitted changes...");
-        let msg = format!("bflow-finish:{branch_name}:{}", current_timestamp());
+        let msg = format!("gflow-finish:{branch_name}:{}", current_timestamp());
         git.stash_push_with_message(&msg)?;
         Some(msg)
     } else {
@@ -160,12 +160,12 @@ pub fn run(
     // Stash pop policy:
     //   - On success: always pop (changes restored).
     //   - On failure of a release/hotfix finish: leave stash for resume.
-    //   - On failure of any other action: pop (preserves prior bflow behavior of
+    //   - On failure of any other action: pop (preserves prior gflow behavior of
     //     restoring the user's working tree even on errors).
     let keep_stash_for_resume = result.is_err() && (is_finish_with_state || resume_state.is_some());
     if let Some(msg) = &stash_msg {
         if keep_stash_for_resume {
-            eprintln!("Your uncommitted changes remain stashed as '{msg}'. They will be restored on a successful 'bflow finish' resume (or after 'bflow finish --abort').");
+            eprintln!("Your uncommitted changes remain stashed as '{msg}'. They will be restored on a successful 'gflow finish' resume (or after 'gflow finish --abort').");
         } else {
             println!("Restoring uncommitted changes...");
             match git.find_stash_by_message(msg) {
@@ -186,7 +186,7 @@ pub fn run(
 
 /// Decide which Action to run given the parsed command, current branch, and
 /// any resume state. Resume state takes precedence over branch-based dispatch
-/// for `bflow finish` (and the default interactive path) — a develop-merge
+/// for `gflow finish` (and the default interactive path) — a develop-merge
 /// conflict leaves HEAD on develop, where the branch-eligibility check would
 /// otherwise reject the resume with "Nothing to finish on this branch."
 pub fn resolve_action_with_state(
@@ -203,7 +203,7 @@ pub fn resolve_action_with_state(
         return Ok(Action::AbortFinish);
     }
 
-    // For `bflow finish` (or the default interactive path), an in-progress finish
+    // For `gflow finish` (or the default interactive path), an in-progress finish
     // state takes precedence over branch-based dispatch. This state is only ever
     // present when standing on the source branch (resume is branch-scoped), so it
     // covers the case where a develop-merge conflict was resolved and the user has
@@ -217,7 +217,7 @@ pub fn resolve_action_with_state(
     if is_finish_or_default && !has_explicit_base {
         if let Some(state) = resume_state {
             eprintln!(
-                "↻ Resuming in-progress {} finish for {} (started_at={}). Use 'bflow finish --abort' to discard.",
+                "↻ Resuming in-progress {} finish for {} (started_at={}). Use 'gflow finish --abort' to discard.",
                 state.kind.as_str(),
                 state.source_branch(),
                 state.started_at,
@@ -282,7 +282,7 @@ fn is_finish_branch_rerun(command: &Option<Commands>) -> bool {
 
 fn unresolved_merge_message(resume_state: Option<&FinishState>) -> String {
     let mut msg = String::from(
-        "Unresolved merge in progress. Resolve conflicts, run 'git commit', then re-run 'bflow finish'."
+        "Unresolved merge in progress. Resolve conflicts, run 'git commit', then re-run 'gflow finish'."
     );
     if let Some(s) = resume_state {
         msg.push_str(&format!(

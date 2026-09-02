@@ -85,7 +85,7 @@ pub(crate) fn push_tag_if_missing(git: &dyn Git, tag: &str) -> Result<(), String
 }
 
 // --- PR completion-type policy ----------------------------------------------
-// Every PR bflow opens must be completed a specific way: finish/* landing PRs
+// Every PR gflow opens must be completed a specific way: finish/* landing PRs
 // with a merge commit (history stays connected), everything else squashed (one
 // commit per change on the target). The type is derived from the merge
 // commit's parent count; a wrong completion hard-stops the flow until the
@@ -114,7 +114,7 @@ pub(crate) const WORK_PR_UNDO: &str =
     "To undo it:\n    \
      1. Revert (or reset) the wrong merge on the target branch.\n    \
      2. Run 'git commit --amend --no-edit' on this branch — the new commit id lets a fresh PR open.\n    \
-     3. Re-run 'bflow finish'.";
+     3. Re-run 'gflow finish'.";
 
 /// Undo recipe for a finish/* landing PR that was squashed: protected branches
 /// cannot be force-pushed back, so the platform's revert is the only clean path.
@@ -124,7 +124,7 @@ pub(crate) const LANDING_PR_UNDO: &str =
 
 const BANNER_RULE: &str = "════════════════════════════════════════════════";
 
-/// The hard-to-miss instruction printed next to every PR bflow creates or
+/// The hard-to-miss instruction printed next to every PR gflow creates or
 /// re-surfaces: which completion button the human must press. The counterpart
 /// of `enforce_completion_type`, which verifies it after the fact.
 pub(crate) fn completion_instruction(expected: CompletionType) -> String {
@@ -156,14 +156,14 @@ pub(crate) fn enforce_completion_type(git: &dyn Git, url: &str, merge_commit_sha
     }
     Err(format!(
         "✖ PR completed with the wrong type: {} (expected {}).\n  {url}\n\n{undo}\n\n\
-         To keep it as-is instead: re-run the same bflow command with --accept-merge-type.",
+         To keep it as-is instead: re-run the same gflow command with --accept-merge-type.",
         actual.label(),
         expected.label(),
     ))
 }
 
 // --- Protected-mode landing helpers ----------------------------------------
-// bflow never merges a PR (SKILL.md principle: protected mode never pushes
+// gflow never merges a PR (SKILL.md principle: protected mode never pushes
 // main/develop) — a landing step opens a PR and stops; a human merges it, and
 // the next run picks up from there. Completion is derived from the hosting
 // platform the same way `finish_work.rs::try_cleanup_merged` derives it, but
@@ -188,13 +188,13 @@ pub(crate) fn reconcile_with_origin(git: &dyn Git, branch: &str) -> Result<(), S
 }
 
 /// The migration guard for finish-branch landings: an open PR whose head is
-/// the source branch itself comes from an older bflow and must be dealt with
-/// by a human — bflow never merges or closes PRs.
+/// the source branch itself comes from an older gflow and must be dealt with
+/// by a human — gflow never merges or closes PRs.
 pub(crate) fn refuse_open_legacy_pr(hosting: &dyn HostingPlatform, source: &str, target: &str) -> Result<(), String> {
     match hosting.open_pr_to(source, target)? {
         Some(url) => Err(format!(
-            "A landing PR from {source} into {target} is still open from an older bflow: {url}\n\
-             Either merge it and re-run 'bflow finish', or close/abandon it and re-run — bflow will then reopen it from a finish/* branch."
+            "A landing PR from {source} into {target} is still open from an older gflow: {url}\n\
+             Either merge it and re-run 'gflow finish', or close/abandon it and re-run — gflow will then reopen it from a finish/* branch."
         )),
         None => Ok(()),
     }
@@ -299,12 +299,12 @@ pub(crate) fn ensure_finish_branch(git: &dyn Git, source: &str, target: &str, re
     Ok(finish)
 }
 
-/// The pending block's conflict line: bflow merges the target into the finish
+/// The pending block's conflict line: gflow merges the target into the finish
 /// branch on every run, so a PR the platform flags as conflicted (the target
 /// moved after it opened) is healed by re-running.
 pub(crate) fn finish_conflict_hint(finish: &str, target: &str) -> String {
     format!(
-        "Conflicts later ({target} moved)? Just re-run — bflow merges `{target}` into \
+        "Conflicts later ({target} moved)? Just re-run — gflow merges `{target}` into \
          `{finish}` in this worktree and stops there for you to resolve locally if needed."
     )
 }
@@ -316,7 +316,7 @@ pub(crate) fn finish_conflict_hint(finish: &str, target: &str) -> String {
 /// performs on re-run. No push step: the re-run pushes the resolved branch.
 pub(crate) fn finish_merge_conflict_hint(finish: &str, source: &str, rerun: &str) -> String {
     format!(
-        "⚠ Merge conflict — bflow switched this worktree to {finish} \
+        "⚠ Merge conflict — gflow switched this worktree to {finish} \
          to build the landing branch, and it is now mid-merge there.\n\
          Resolve the conflicts here, then:\n    \
          git add . && git commit --no-edit\n    {rerun}\n\
@@ -350,7 +350,7 @@ pub(crate) fn land_leg_strict(git: &dyn Git, hosting: &dyn HostingPlatform, sour
     Ok(LegState::Pending { url, finish })
 }
 
-/// A landing PR's description: an explicitly authored bflow template wins;
+/// A landing PR's description: an explicitly authored gflow template wins;
 /// without one the body stays empty — the repo's native PR template is for
 /// human PRs and never decorates a machinery merge.
 pub(crate) fn landing_pr_body(template: Option<&Path>) -> PrBody<'_> {
@@ -475,7 +475,7 @@ pub(crate) fn announce_version_pr(hosting: &dyn HostingPlatform, title: &str, ur
     open_pr_in_browser(hosting, url);
 }
 
-/// Best-effort browser open for a PR bflow just created or re-surfaced: the PR
+/// Best-effort browser open for a PR gflow just created or re-surfaced: the PR
 /// exists and its URL is already printed, so a failed open (headless CI, no
 /// xdg-open) is a warning, never an error.
 pub(crate) fn open_pr_in_browser(hosting: &dyn HostingPlatform, url: &str) {
@@ -505,7 +505,7 @@ pub fn tag_at_if_missing(git: &dyn Git, tag: &str, message: &str, sha: &str) -> 
     } else {
         Err(format!(
             "Tag {tag} exists but points at {actual}, not the PR merge commit {sha}. \
-             Move or delete the tag, then re-run 'bflow finish'."
+             Move or delete the tag, then re-run 'gflow finish'."
         ))
     }
 }
@@ -581,7 +581,7 @@ pub(crate) fn run_version_script(git: &dyn Git, script: &dyn VersionScript, vers
 }
 
 /// List `{prefix}/*` branches that are still open, excluding any that already
-/// shipped — reusing a shipped branch would make `bflow start` loop onto a
+/// shipped — reusing a shipped branch would make `gflow start` loop onto a
 /// dead branch forever and hotfix fan-out merge into history that already
 /// landed. What "shipped" means depends on when the clean tag appears:
 ///
@@ -625,15 +625,15 @@ pub(crate) fn open_versioned_branches(git: &dyn Git, hosting: &dyn HostingPlatfo
 
 /// Guidance appended to a merge conflict during a release/hotfix finish.
 ///
-/// Resume is branch-scoped: bflow only continues an interrupted finish when you
+/// Resume is branch-scoped: gflow only continues an interrupted finish when you
 /// are standing on its source branch. A merge conflict usually leaves HEAD on the
 /// target branch (e.g. develop), so the user must switch back before re-running.
 pub(crate) fn resume_hint(source_branch: &str) -> String {
     format!(
         "Resolve the conflict and commit the merge, then switch back to the source \
-         branch and re-run 'bflow finish' to continue:\n    \
+         branch and re-run 'gflow finish' to continue:\n    \
          git add . && git commit --no-edit\n    \
-         git switch {source_branch}\n    bflow finish"
+         git switch {source_branch}\n    gflow finish"
     )
 }
 
@@ -667,13 +667,13 @@ mod tests {
 
     #[test]
     fn finish_conflict_hint_points_at_rerunning() {
-        // bflow merges the target into the finish branch itself, so a PR that
+        // gflow merges the target into the finish branch itself, so a PR that
         // conflicts later (the target moved) is healed by re-running. The hint
         // warns that the re-run works on the finish branch in this worktree.
         let hint = finish_conflict_hint("finish/hotfix-2.11.6-into-main", "main");
         assert_eq!(
             hint,
-            "Conflicts later (main moved)? Just re-run — bflow merges `main` into \
+            "Conflicts later (main moved)? Just re-run — gflow merges `main` into \
              `finish/hotfix-2.11.6-into-main` in this worktree and stops there \
              for you to resolve locally if needed."
         );
@@ -686,14 +686,14 @@ mod tests {
         // with `git switch` — mid-merge, that fails. No manual switch-back
         // step: the re-run switches back to the source branch itself. No `git
         // push` step: the re-run pushes the resolved finish branch itself.
-        let hint = finish_merge_conflict_hint("finish/hotfix-2.11.6-into-main", "hotfix/2.11.6", "bflow finish");
+        let hint = finish_merge_conflict_hint("finish/hotfix-2.11.6-into-main", "hotfix/2.11.6", "gflow finish");
         assert_eq!(
             hint,
-            "⚠ Merge conflict — bflow switched this worktree to finish/hotfix-2.11.6-into-main \
+            "⚠ Merge conflict — gflow switched this worktree to finish/hotfix-2.11.6-into-main \
              to build the landing branch, and it is now mid-merge there.\n\
              Resolve the conflicts here, then:\n    \
-             git add . && git commit --no-edit\n    bflow finish\n\
-             Re-running 'bflow finish' switches this worktree back to hotfix/2.11.6 and continues.\n\
+             git add . && git commit --no-edit\n    gflow finish\n\
+             Re-running 'gflow finish' switches this worktree back to hotfix/2.11.6 and continues.\n\
              To back out instead: git merge --abort && git switch hotfix/2.11.6"
         );
     }
@@ -719,7 +719,7 @@ mod tests {
         let msg = pending_landing_message(
             "chore: merge hotfix 2.11.6 into main",
             "https://example.com/pull/473",
-            "bflow finish",
+            "gflow finish",
             "Conflicts? ...",
             false,
         );
@@ -729,7 +729,7 @@ mod tests {
              https://example.com/pull/473\n\
              \n\
              Waiting for a human to merge this PR.\n\
-             Re-run 'bflow finish' to continue after the merge.\n\
+             Re-run 'gflow finish' to continue after the merge.\n\
              \n\
              Conflicts? ..."
         );
@@ -737,7 +737,7 @@ mod tests {
 
     #[test]
     fn pending_landing_message_bolds_only_the_title_on_a_terminal() {
-        let msg = pending_landing_message("title", "url", "bflow sync", "hint", true);
+        let msg = pending_landing_message("title", "url", "gflow sync", "hint", true);
         assert!(msg.starts_with("\n\x1b[1mtitle\x1b[0m\nurl\n"), "got: {msg:?}");
         assert_eq!(msg.matches('\x1b').count(), 2, "only the title is styled; got: {msg:?}");
     }
@@ -750,9 +750,9 @@ mod tests {
         assert_eq!(
             hint,
             "Resolve the conflict and commit the merge, then switch back to the source \
-             branch and re-run 'bflow finish' to continue:\n    \
+             branch and re-run 'gflow finish' to continue:\n    \
              git add . && git commit --no-edit\n    \
-             git switch release/1.1.0\n    bflow finish"
+             git switch release/1.1.0\n    gflow finish"
         );
     }
 }

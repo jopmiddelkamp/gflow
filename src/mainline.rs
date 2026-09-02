@@ -7,8 +7,8 @@
 use crate::git::Git;
 
 /// Written in **local** scope: the mainline belongs to the repository, not the
-/// developer — the opposite default from `bflow.worktree.*`.
-pub const MAIN_BRANCH_KEY: &str = "bflow.branch.main";
+/// developer — the opposite default from `gflow.worktree.*`.
+pub const MAIN_BRANCH_KEY: &str = "gflow.branch.main";
 
 const SUPPORTED: [&str; 2] = ["main", "master"];
 
@@ -20,7 +20,7 @@ pub fn resolve_main_branch(git: &dyn Git) -> Result<String, String> {
             if !SUPPORTED.contains(&configured) {
                 return Err(format!(
                     "Unsupported mainline branch '{configured}' in {MAIN_BRANCH_KEY}. \
-                     bflow supports 'main' or 'master'. \
+                     gflow supports 'main' or 'master'. \
                      Fix it with 'git config {MAIN_BRANCH_KEY} main'."
                 ));
             }

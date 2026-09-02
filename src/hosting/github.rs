@@ -1,6 +1,6 @@
 use super::{resolve_body_file, CliRunner, PrBody, HostingPlatform, LandedPr, MergedPr, Result};
 
-const AUTH_REMEDY: &str = "If authentication expired, run 'gh auth login', then re-run 'bflow finish'.";
+const AUTH_REMEDY: &str = "If authentication expired, run 'gh auth login', then re-run 'gflow finish'.";
 
 pub struct GitHub<'a> {
     runner: &'a dyn CliRunner,

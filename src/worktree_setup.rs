@@ -50,7 +50,7 @@ pub fn load(worktree_root: &Path) -> Result<Option<SetupCommands>, String> {
 }
 
 /// The setup commands this run should use, plus a warning to print if the repo's
-/// file could not be used. A file bflow cannot parse is reported and ignored
+/// file could not be used. A file gflow cannot parse is reported and ignored
 /// rather than fatal: setup commands never fail a start, so they must not fail
 /// every other command either — and with the worktree flow off the file is not
 /// read at all, because nothing in the run could act on it.
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn load_prefers_cursor_file_then_falls_back_then_none() {
-        let dir = crate::test_support::tmp_dir("bflow-worktree-setup-test");
+        let dir = crate::test_support::tmp_dir("gflow-worktree-setup-test");
         assert_eq!(load(&dir).unwrap(), None);
 
         std::fs::write(dir.join(GENERIC_FILE), r#"{"setup-worktree": ["generic"]}"#).unwrap();
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn resolve_ignores_the_file_when_the_worktree_flow_is_off() {
-        let dir = crate::test_support::tmp_dir("bflow-worktree-setup-test");
+        let dir = crate::test_support::tmp_dir("gflow-worktree-setup-test");
         std::fs::write(dir.join(GENERIC_FILE), r#"{"setup-worktree": ["a",]}"#).unwrap();
         assert_eq!(resolve(&dir, false), (None, None));
         std::fs::remove_dir_all(&dir).ok();
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn resolve_yields_the_commands_when_the_file_parses() {
-        let dir = crate::test_support::tmp_dir("bflow-worktree-setup-test");
+        let dir = crate::test_support::tmp_dir("gflow-worktree-setup-test");
         std::fs::write(dir.join(GENERIC_FILE), r#"{"setup-worktree": ["a"]}"#).unwrap();
         let (commands, warning) = resolve(&dir, true);
         assert_eq!(commands.unwrap().commands, vec!["a".to_string()]);
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn resolve_warns_instead_of_failing_when_the_file_is_unparsable() {
-        let dir = crate::test_support::tmp_dir("bflow-worktree-setup-test");
+        let dir = crate::test_support::tmp_dir("gflow-worktree-setup-test");
         std::fs::write(dir.join(GENERIC_FILE), r#"{"setup-worktree": ["a",]}"#).unwrap();
         let (commands, warning) = resolve(&dir, true);
         assert_eq!(commands, None);
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn load_names_the_file_on_a_parse_error() {
-        let dir = crate::test_support::tmp_dir("bflow-worktree-setup-test");
+        let dir = crate::test_support::tmp_dir("gflow-worktree-setup-test");
         std::fs::write(dir.join(GENERIC_FILE), "{ nope").unwrap();
         let err = load(&dir).unwrap_err();
         assert!(err.contains("worktrees.json"), "got: {err}");

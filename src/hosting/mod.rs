@@ -36,7 +36,7 @@ pub struct LandedPr {
 /// only execute it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PrBody<'a> {
-    /// Body from this file (a resolved bflow template).
+    /// Body from this file (a resolved gflow template).
     File(&'a str),
     /// Fall back to the repository's own default PR template, else empty.
     NativeDefault,
@@ -56,7 +56,7 @@ pub trait HostingPlatform {
     /// PR yields `None`.
     fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<LandedPr>>;
     /// URL of the newest OPEN `head`→`base` PR, if any. Exists for the
-    /// finish-branch migration: an open landing PR from an older bflow (head =
+    /// finish-branch migration: an open landing PR from an older gflow (head =
     /// the release/hotfix branch itself) must be surfaced, not duplicated.
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>>;
     fn open_url(&self, url: &str) -> Result<()> {
@@ -98,7 +98,7 @@ impl CliRunner for SystemCli {
     }
 }
 
-/// PR-body precedence shared by all providers: a bflow-resolved template file
+/// PR-body precedence shared by all providers: a gflow-resolved template file
 /// is used verbatim; `NativeDefault` probes the first existing native
 /// default-template path, else `None` (empty body). The native path *lists*
 /// stay per-provider knowledge on purpose.
@@ -117,10 +117,10 @@ mod tests {
     use super::{resolve_body_file, PrBody};
 
     #[test]
-    fn bflow_template_wins_over_native_paths() {
+    fn gflow_template_wins_over_native_paths() {
         // The native path need not even exist for the template to win.
-        let result = resolve_body_file(PrBody::File(".github/pr-templates/bflow-fix.md"), &["nope.md"]);
-        assert_eq!(result, Some(".github/pr-templates/bflow-fix.md".to_string()));
+        let result = resolve_body_file(PrBody::File(".github/pr-templates/gflow-fix.md"), &["nope.md"]);
+        assert_eq!(result, Some(".github/pr-templates/gflow-fix.md".to_string()));
     }
 
     #[test]

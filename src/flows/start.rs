@@ -80,7 +80,7 @@ pub fn start_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &Rep
     let release_branch = if effective_no_checkout {
         open_versioned_branches(git, hosting, cfg, main_branch, "release")?
             .first()
-            .ok_or("No release branch found. Create one with 'bflow start release' first.")?
+            .ok_or("No release branch found. Create one with 'gflow start release' first.")?
             .clone()
     } else {
         let current = git.current_branch()?;
@@ -97,7 +97,7 @@ pub fn start_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &Rep
 /// In worktree mode the hotfix container gets its own worktree too (opened
 /// before the fix branch's, which then keeps editor focus): `start hotfix-fix`
 /// is the only command that creates a hotfix container, so no later command
-/// would hand it one — and `bflow finish` needs it checked out somewhere.
+/// would hand it one — and `gflow finish` needs it checked out somewhere.
 pub fn start_hotfix_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, name: &str, no_checkout: bool, worktree: Option<WorktreeContext<'_>>, main_branch: &str, script: Option<&dyn VersionScript>) -> Result<(), String> {
     let effective_no_checkout = effective_no_checkout(no_checkout, &worktree);
     let hotfix_branch = resolve_or_create_hotfix(git, hosting, cfg, effective_no_checkout, main_branch, script)?;
@@ -183,7 +183,7 @@ fn resolve_or_create_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &d
 
 /// M2 warn-and-continue advice: how to finish the develop version bump by
 /// hand after a failure. Free mode can commit and push develop directly;
-/// protected mode never pushes develop (bflow SKILL.md, "Landing modes"), so a
+/// protected mode never pushes develop (gflow SKILL.md, "Landing modes"), so a
 /// direct push there would just be rejected — the fix must go out as its own PR.
 fn m2_failure_advice(mode: Mode, script_name: &str, version: &SemVer) -> String {
     match mode {
@@ -234,7 +234,7 @@ fn bump_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: 
 
     // A prior run can leave this branch behind locally (created, then
     // interrupted before the script committed or pushed) — machine-owned, so
-    // bflow clears it itself rather than dying on git's raw "branch already
+    // gflow clears it itself rather than dying on git's raw "branch already
     // exists" (mirrors bump_protected in finish_release.rs).
     if git.local_branch_exists(&chore_branch)? {
         git.delete_branch_local(&chore_branch)?;
@@ -355,7 +355,7 @@ fn resolve_or_create_hotfix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
         git.create_branch_no_checkout(&branch, main_branch)?;
         if let Some(script) = script {
             eprintln!(
-                "⚠ Version script not run: {branch} was created without checkout, so bflow cannot commit version files there."
+                "⚠ Version script not run: {branch} was created without checkout, so gflow cannot commit version files there."
             );
             eprintln!(
                 "  Recover manually: git switch {branch}, run {} {next}, commit, and push.",
