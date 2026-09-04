@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-09-04
+
+### Changed
+- **BREAKING:** The project is renamed from bflow to gflow. The binary is now `gflow`, the crate is `gflow`, and the packages published to Homebrew and Chocolatey are `gflow`.
+- **BREAKING:** Repo configuration moved from `.bflow/config` to `.gflow/config`, and the version script from `.bflow/set-version.{sh,cmd}` to `.gflow/set-version.{sh,cmd}`.
+- **BREAKING:** Git config keys are now `gflow.*` (was `bflow.*`) — `gflow.branch.main`, `gflow.hosting.provider`, and every `gflow.worktree.*` key.
+- **BREAKING:** PR templates are now read from `.github/pr-templates/gflow-<key>.md` (was `bflow-<key>.md`).
+- The project home is now `jopmiddelkamp/gflow`; every release, tap, and documentation URL points there instead of `Beans-BV/beans-gitflow`.
+- Logo and art assets are rebranded to gflow.
+
+### Migration
+- Rename `.bflow/` to `.gflow/` in every repo that was initialised with bflow, and commit the move.
+- Rename `.github/pr-templates/bflow-*.md` to `gflow-*.md`.
+- Re-set your local git config keys under the `gflow.` prefix, for example `git config gflow.branch.main master`.
+- Reinstall the CLI as `gflow`; the old `bflow` binary is not updated.
+
 ## [3.5.0] - 2026-09-02
 
 ### Added
@@ -194,6 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.0.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.5.0...v4.0.0
 [3.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.2.0...v3.3.0
