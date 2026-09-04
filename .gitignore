@@ -3,3 +3,4 @@ target
 docs/superpowers
 tasks/todo.md
 .claude/hooks/.tdd-gate-pass
+.DS_Store
