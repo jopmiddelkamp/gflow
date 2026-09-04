@@ -2,23 +2,23 @@ use std::process::{Command, ExitCode};
 
 use clap::Parser;
 
-use bflow::cli::{Commands, WorktreeAction};
-use bflow::git::{GitCli, SystemRunner};
-use bflow::git::Git;
-use bflow::hosting::detect::{self, Provider};
-use bflow::hosting::devops::AzureDevOps;
-use bflow::hosting::github::GitHub;
-use bflow::hosting::{HostingPlatform, SystemCli};
-use bflow::lifecycle;
-use bflow::menu::MenuPrompter;
-use bflow::editor::CommandEditor;
-use bflow::init;
-use bflow::version_script::{self, ScriptCli, VersionScript};
-use bflow::worktree::{self, WorktreeConfig, WorktreeEnv};
-use bflow::worktree_setup::{self, ShellSetup};
+use gflow::cli::{Commands, WorktreeAction};
+use gflow::git::{GitCli, SystemRunner};
+use gflow::git::Git;
+use gflow::hosting::detect::{self, Provider};
+use gflow::hosting::devops::AzureDevOps;
+use gflow::hosting::github::GitHub;
+use gflow::hosting::{HostingPlatform, SystemCli};
+use gflow::lifecycle;
+use gflow::menu::MenuPrompter;
+use gflow::editor::CommandEditor;
+use gflow::init;
+use gflow::version_script::{self, ScriptCli, VersionScript};
+use gflow::worktree::{self, WorktreeConfig, WorktreeEnv};
+use gflow::worktree_setup::{self, ShellSetup};
 
 #[derive(Parser)]
-#[command(name = "bflow", version, about = "Beans GitFlow - customized gitflow workflow CLI")]
+#[command(name = "gflow", version, about = "gflow - a customized gitflow workflow CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -40,7 +40,7 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     check_command_exists("git")?;
     let git = GitCli::new(&SystemRunner);
 
-    // `bflow worktree` only reads/writes git config — no gh, auth, fetch, or branch
+    // `gflow worktree` only reads/writes git config — no gh, auth, fetch, or branch
     // context needed. Dispatch it here and return before the branch-flow machinery.
     let command = match command {
         Some(Commands::Worktree { action, local }) => {

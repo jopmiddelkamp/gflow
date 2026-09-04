@@ -1,7 +1,7 @@
-use bflow::cli::{Commands, StartKind, StartOptions, resolve_action};
-use bflow::flows::start::ReleaseType;
-use bflow::git::branch::BranchType;
-use bflow::action::Action;
+use gflow::cli::{Commands, StartKind, StartOptions, resolve_action};
+use gflow::flows::start::ReleaseType;
+use gflow::git::branch::BranchType;
+use gflow::action::Action;
 
 // --- Start work branch tests ---
 
@@ -430,14 +430,14 @@ fn start_feature_with_no_worktree_flag() {
 // --- The clap surface itself ---
 
 #[derive(clap::Parser)]
-#[command(name = "bflow")]
+#[command(name = "gflow")]
 struct TestCli {
     #[command(subcommand)]
     command: Commands,
 }
 
 fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
-    let argv = std::iter::once("bflow").chain(args.iter().copied());
+    let argv = std::iter::once("gflow").chain(args.iter().copied());
     clap::Parser::try_parse_from(argv).map(|c: TestCli| c.command)
 }
 
@@ -445,7 +445,7 @@ fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
 fn every_work_kind_in_the_table_has_a_working_start_subcommand() {
     for kind in BranchType::work_kinds() {
         let cmd = parse(&["start", kind, "--name", "x"])
-            .unwrap_or_else(|e| panic!("`bflow start {kind}` must parse — the WORK_TYPES table \
+            .unwrap_or_else(|e| panic!("`gflow start {kind}` must parse — the WORK_TYPES table \
                 offers it in the menu, so the CLI must accept it too.\n{e}"));
 
         let action = resolve_action(cmd, &BranchType::Develop, false, "main").unwrap();
@@ -492,7 +492,7 @@ fn incompatible_flag_combinations_are_rejected_by_clap_not_by_the_flow() {
         vec!["start", "release", "--major", "--minor"],
         vec!["start", "feature"], // --name is required
     ] {
-        assert!(parse(&args).is_err(), "`bflow {}` must be rejected", args.join(" "));
+        assert!(parse(&args).is_err(), "`gflow {}` must be rejected", args.join(" "));
     }
 }
 

@@ -1,13 +1,13 @@
 //! Hosting-provider detection.
 //!
 //! The provider is auto-detected from the `origin` remote URL. The git config
-//! key `bflow.hosting.provider` (`github` | `devops`) overrides detection for
+//! key `gflow.hosting.provider` (`github` | `devops`) overrides detection for
 //! edge cases (e.g. GitHub Enterprise domains).
 
 use crate::git::Git;
 use super::Result;
 
-const PROVIDER_KEY: &str = "bflow.hosting.provider";
+const PROVIDER_KEY: &str = "gflow.hosting.provider";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Provider {
@@ -15,7 +15,7 @@ pub enum Provider {
     AzureDevOps { org: String, project: String, repo: String },
 }
 
-/// Detect the hosting provider from the `bflow.hosting.provider` override and
+/// Detect the hosting provider from the `gflow.hosting.provider` override and
 /// the `origin` remote URL.
 pub fn detect(git: &dyn Git) -> Result<Provider> {
     let override_val = git.get_config(PROVIDER_KEY)?;

@@ -12,8 +12,8 @@ use crate::repo_config::{BumpStrategy, Mode, RepoConfig};
 use crate::version::{finish_branch_name, SemVer};
 use crate::version_script::VersionScript;
 
-const NO_RC_TAG_ERROR: &str = "No RC tag found on this release branch. Run 'bflow bump' first.";
-const NO_VERSION_TAG_ERROR: &str = "No version tag found on this release branch. Run 'bflow bump' first.";
+const NO_RC_TAG_ERROR: &str = "No RC tag found on this release branch. Run 'gflow bump' first.";
+const NO_VERSION_TAG_ERROR: &str = "No version tag found on this release branch. Run 'gflow bump' first.";
 
 /// The staging gate's catalog error: names the branch, the tag it must
 /// catch up to, and the remedy. Shared by free mode's ancestor-guarded check
@@ -29,7 +29,7 @@ fn past_staged_tag_error(release_branch: &str, main_branch: &str, latest_tag: &s
     format!(
         "HEAD of {release_branch} is {commits_past} {noun} past {latest_tag}.\n\
          Every commit merged to {main_branch} must be validated on staging via {deploy}.\n\
-         Run 'bflow bump' to cut {next}, wait for staging to pass, then 'bflow finish'."
+         Run 'gflow bump' to cut {next}, wait for staging to pass, then 'gflow finish'."
     )
 }
 
@@ -192,7 +192,7 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
     require_clean_tree(git)?;
     // A prior run can leave this branch behind locally (created, then
     // interrupted before the script committed or pushed). It is machine-owned,
-    // so bflow clears it itself rather than dying on git's raw "branch already
+    // so gflow clears it itself rather than dying on git's raw "branch already
     // exists" — remote-exists is already handled by the reuse path above.
     if git.local_branch_exists(&chore_branch)? {
         git.delete_branch_local(&chore_branch)?;
@@ -222,7 +222,7 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
 
 fn announce_deferred(hosting: &dyn HostingPlatform, title: &str, pr_url: &str) {
     announce_version_pr(hosting, title, pr_url);
-    println!("The RC tag is deferred until this PR merges. After it merges, re-run 'bflow bump' to cut the tag.");
+    println!("The RC tag is deferred until this PR merges. After it merges, re-run 'gflow bump' to cut the tag.");
 }
 
 pub fn sync_with_develop(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
@@ -247,20 +247,20 @@ pub fn sync_with_develop(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &Rep
     Ok(())
 }
 
-/// Protected mode: bflow never merges into develop itself, so sync opens a
+/// Protected mode: gflow never merges into develop itself, so sync opens a
 /// landing PR from the develop finish branch and stops for a human to merge.
 /// The strict landed-check is what keeps a stale merged landing from being
 /// trusted as "already synced" — a release with new commits since that merge
 /// re-enters this same PR-opening path with a refreshed finish branch.
 fn sync_with_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, release: &SemVer, release_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
     let title = format!("chore: sync release {release} with develop");
-    match land_leg_strict(git, hosting, release_branch, "develop", &title, template, "bflow sync", accept_merge_type)? {
+    match land_leg_strict(git, hosting, release_branch, "develop", &title, template, "gflow sync", accept_merge_type)? {
         LegState::Landed(_) | LegState::ContentPresent => {
             println!("Develop already contains {release_branch}.");
             Ok(())
         }
         LegState::Pending { url, finish } => {
-            announce_pending_landing(hosting, &title, &url, "bflow sync", &finish_conflict_hint(&finish, "develop"));
+            announce_pending_landing(hosting, &title, &url, "gflow sync", &finish_conflict_hint(&finish, "develop"));
             Ok(())
         }
     }
@@ -359,7 +359,7 @@ fn staging_gate(git: &dyn Git, release_branch: &str, main_branch: &str, major: u
     Ok(())
 }
 
-/// Protected mode: bflow never merges into `main`/`develop` itself (bflow
+/// Protected mode: gflow never merges into `main`/`develop` itself (gflow
 /// SKILL.md, "Landing modes"), so each landing step opens a PR and stops for a
 /// human to merge; the next run picks up from wherever `leg_landed` finds it
 /// landed.
@@ -405,9 +405,9 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
                     None => {
                         staging_gate(git, &release_branch, main_branch, major, minor, cfg.bump_strategy)?;
                         let title = format!("chore: merge release {release} into {main_branch}");
-                        let finish = ensure_finish_branch(git, &release_branch, main_branch, "bflow finish")?;
+                        let finish = ensure_finish_branch(git, &release_branch, main_branch, "gflow finish")?;
                         let url = hosting.create_or_get_pr(&finish, main_branch, &title, landing_pr_body(template))?;
-                        announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, main_branch));
+                        announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, main_branch));
                         return Ok(());
                     }
                 }
@@ -433,9 +433,9 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
             None => {
                 staging_gate(git, &release_branch, main_branch, major, minor, cfg.bump_strategy)?;
                 let title = format!("chore: merge release {release} into {main_branch}");
-                let finish = ensure_finish_branch(git, &release_branch, main_branch, "bflow finish")?;
+                let finish = ensure_finish_branch(git, &release_branch, main_branch, "gflow finish")?;
                 let url = hosting.create_or_get_pr(&finish, main_branch, &title, landing_pr_body(template))?;
-                announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, main_branch));
+                announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, main_branch));
                 return Ok(());
             }
         },
@@ -443,11 +443,11 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
 
     let mut content_landed = false;
     let title = format!("chore: merge release {release} into develop");
-    match land_leg_strict(git, hosting, &release_branch, "develop", &title, template, "bflow finish", accept_merge_type)? {
+    match land_leg_strict(git, hosting, &release_branch, "develop", &title, template, "gflow finish", accept_merge_type)? {
         LegState::Landed(pr) => landed.push(pr),
         LegState::ContentPresent => content_landed = true,
         LegState::Pending { url, finish } => {
-            announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, "develop"));
+            announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, "develop"));
             return Ok(());
         }
     }

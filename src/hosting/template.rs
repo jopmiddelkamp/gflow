@@ -1,10 +1,10 @@
 //! Branch-aware PR template resolution.
 //!
-//! bflow looks for templates in `.github/pr-templates/` named `bflow-<key>.md` and
+//! gflow looks for templates in `.github/pr-templates/` named `gflow-<key>.md` and
 //! resolves them most-specific first:
-//!   1. `bflow-<specific>.md`  (e.g. `bflow-release-fix.md`)
-//!   2. `bflow-<group>.md`     (e.g. `bflow-fix.md` for the fix family)
-//!   3. `bflow-default.md`
+//!   1. `gflow-<specific>.md`  (e.g. `gflow-release-fix.md`)
+//!   2. `gflow-<group>.md`     (e.g. `gflow-fix.md` for the fix family)
+//!   3. `gflow-default.md`
 //!
 //! When none of these exist this returns `None` and the hosting layer falls back to the
 //! repository's git/GitHub default template (or an empty body).
@@ -43,7 +43,7 @@ fn resolve_keys_in(dir: &Path, specific: &str, group: &str) -> Option<PathBuf> {
     }
     keys.push("default");
     keys.into_iter()
-        .map(|k| dir.join(format!("bflow-{k}.md")))
+        .map(|k| dir.join(format!("gflow-{k}.md")))
         .find(|p| p.exists())
 }
 
@@ -53,7 +53,7 @@ mod tests {
     use std::fs;
 
     fn tmp_dir() -> PathBuf {
-        crate::test_support::tmp_dir("bflow-template-test")
+        crate::test_support::tmp_dir("gflow-template-test")
     }
 
     fn touch(dir: &Path, name: &str) {
@@ -65,41 +65,41 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(".github/pr-templates");
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "bflow-default.md");
+        touch(&dir, "gflow-default.md");
         let bt = BranchType::parse("feature/foo");
-        assert_eq!(resolve(&root, &bt), Some(dir.join("bflow-default.md")));
+        assert_eq!(resolve(&root, &bt), Some(dir.join("gflow-default.md")));
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn specific_wins_over_group_and_default() {
         let dir = tmp_dir();
-        touch(&dir, "bflow-release-fix.md");
-        touch(&dir, "bflow-fix.md");
-        touch(&dir, "bflow-default.md");
+        touch(&dir, "gflow-release-fix.md");
+        touch(&dir, "gflow-fix.md");
+        touch(&dir, "gflow-default.md");
         let bt = BranchType::parse("release-fix/1.2.0/foo");
-        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("bflow-release-fix.md")));
+        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("gflow-release-fix.md")));
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn group_wins_over_default_when_no_specific() {
         let dir = tmp_dir();
-        touch(&dir, "bflow-fix.md");
-        touch(&dir, "bflow-default.md");
+        touch(&dir, "gflow-fix.md");
+        touch(&dir, "gflow-default.md");
         // release-fix has no specific file, so it falls back to the fix group.
         let bt = BranchType::parse("release-fix/1.2.0/foo");
-        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("bflow-fix.md")));
+        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("gflow-fix.md")));
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn fix_family_maps_to_fix_group() {
         let dir = tmp_dir();
-        touch(&dir, "bflow-fix.md");
+        touch(&dir, "gflow-fix.md");
         for branch in ["fix/foo", "release-fix/1.2.0/foo", "hotfix-fix/1.2.0/foo"] {
             let bt = BranchType::parse(branch);
-            assert_eq!(resolve_in(&dir, &bt), Some(dir.join("bflow-fix.md")), "branch={branch}");
+            assert_eq!(resolve_in(&dir, &bt), Some(dir.join("gflow-fix.md")), "branch={branch}");
         }
         fs::remove_dir_all(&dir).ok();
     }
@@ -107,9 +107,9 @@ mod tests {
     #[test]
     fn falls_back_to_default() {
         let dir = tmp_dir();
-        touch(&dir, "bflow-default.md");
+        touch(&dir, "gflow-default.md");
         let bt = BranchType::parse("feature/foo");
-        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("bflow-default.md")));
+        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("gflow-default.md")));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn none_for_non_pr_branch_even_with_default() {
         let dir = tmp_dir();
-        touch(&dir, "bflow-default.md");
+        touch(&dir, "gflow-default.md");
         // release branches never open a PR — no template key, so no resolution.
         let bt = BranchType::parse("release/1.2.0");
         assert_eq!(resolve_in(&dir, &bt), None);
@@ -136,10 +136,10 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "bflow-release-chore.md");
-        touch(&dir, "bflow-chore.md");
-        touch(&dir, "bflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("bflow-release-chore.md")));
+        touch(&dir, "gflow-release-chore.md");
+        touch(&dir, "gflow-chore.md");
+        touch(&dir, "gflow-default.md");
+        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-release-chore.md")));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -148,9 +148,9 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "bflow-chore.md");
-        touch(&dir, "bflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("bflow-chore.md")));
+        touch(&dir, "gflow-chore.md");
+        touch(&dir, "gflow-default.md");
+        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-chore.md")));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -159,8 +159,8 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "bflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("bflow-default.md")));
+        touch(&dir, "gflow-default.md");
+        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-default.md")));
         fs::remove_dir_all(&root).ok();
     }
 }

@@ -58,7 +58,7 @@ pub fn finish_hotfix(
             &format!(
                 "Hotfix {version} was merged into {main_branch} and develop, but propagation into {release} failed.\n\
                  {}\n\
-                 (After all releases are updated, run 'bflow bump' on each to cut a fresh RC for staging.)",
+                 (After all releases are updated, run 'gflow bump' on each to cut a fresh RC for staging.)",
                 resume_hint(&hotfix_branch)
             ))?;
         // The push sits outside the merge guard so merged-but-unpushed crashes
@@ -91,7 +91,7 @@ pub fn finish_hotfix_cleanup(git: &dyn Git, cfg: &RepoConfig, hotfix_branch: &st
     } else {
         let list = release_branches.join(", ");
         println!("✔ Hotfix {version} propagated to: {main_branch}, develop, {list}");
-        println!("Run 'bflow bump' on each release branch to cut a new RC.");
+        println!("Run 'gflow bump' on each release branch to cut a new RC.");
     }
     Ok(())
 }
@@ -129,9 +129,9 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
             }
             None => {
                 let title = format!("chore: merge hotfix {version} into {main_branch}");
-                let finish = ensure_finish_branch(git, &hotfix_branch, main_branch, "bflow finish")?;
+                let finish = ensure_finish_branch(git, &hotfix_branch, main_branch, "gflow finish")?;
                 let url = hosting.create_or_get_pr(&finish, main_branch, &title, landing_pr_body(template))?;
-                announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, main_branch));
+                announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, main_branch));
                 return Ok(());
             }
         }
@@ -143,11 +143,11 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
 
     let mut content_landed = false;
     let title = format!("chore: merge hotfix {version} into develop");
-    match land_leg_strict(git, hosting, &hotfix_branch, "develop", &title, template, "bflow finish", accept_merge_type)? {
+    match land_leg_strict(git, hosting, &hotfix_branch, "develop", &title, template, "gflow finish", accept_merge_type)? {
         LegState::Landed(pr) => landed.push(pr),
         LegState::ContentPresent => content_landed = true,
         LegState::Pending { url, finish } => {
-            announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, "develop"));
+            announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, "develop"));
             return Ok(());
         }
     }
@@ -157,11 +157,11 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
 
     for release in &release_branches {
         let title = format!("chore: merge hotfix {version} into {release}");
-        match land_leg_strict(git, hosting, &hotfix_branch, release, &title, template, "bflow finish", accept_merge_type)? {
+        match land_leg_strict(git, hosting, &hotfix_branch, release, &title, template, "gflow finish", accept_merge_type)? {
             LegState::Landed(pr) => landed.push(pr),
             LegState::ContentPresent => content_landed = true,
             LegState::Pending { url, finish } => {
-                announce_pending_landing(hosting, &title, &url, "bflow finish", &finish_conflict_hint(&finish, release));
+                announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, release));
                 return Ok(());
             }
         }

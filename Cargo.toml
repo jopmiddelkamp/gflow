@@ -1,6 +1,6 @@
 [package]
-name = "bflow"
-version = "3.5.0"
+name = "gflow"
+version = "4.0.0"
 edition = "2021"
 
 [dependencies]

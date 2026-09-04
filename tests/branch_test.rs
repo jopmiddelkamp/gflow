@@ -1,4 +1,4 @@
-use bflow::git::branch::BranchType;
+use gflow::git::branch::BranchType;
 
 #[test]
 fn parse_main() {
@@ -65,7 +65,7 @@ fn parse_other() {
 //
 // Everything downstream gates on BranchType: a `release/` branch whose version
 // does not parse must NOT become a Release (a finish would then invent a version
-// and tag main). `Other` is the safe answer — bflow refuses instead of guessing.
+// and tag main). `Other` is the safe answer — gflow refuses instead of guessing.
 
 #[test]
 fn work_branch_without_a_name_is_not_a_work_branch() {

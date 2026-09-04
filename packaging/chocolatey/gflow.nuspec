@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>gflow</id>
+    <version>4.0.0</version>
+    <title>gflow - a customized gitflow workflow CLI</title>
+    <authors>Jop Middelkamp</authors>
+    <projectUrl>https://github.com/jopmiddelkamp/gflow</projectUrl>
+    <licenseUrl>https://github.com/jopmiddelkamp/gflow/blob/master/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <iconUrl>https://raw.githubusercontent.com/jopmiddelkamp/gflow/master/packaging/chocolatey/icon.png</iconUrl>
+    <packageSourceUrl>https://github.com/jopmiddelkamp/gflow</packageSourceUrl>
+    <summary>A cross-platform CLI tool for a customized gitflow workflow.</summary>
+    <description>A cross-platform CLI tool that implements a customized gitflow workflow. Detects your current git branch, presents context-appropriate options, and handles branching, merging, tagging, and PR creation.</description>
+    <releaseNotes>https://github.com/jopmiddelkamp/gflow/releases</releaseNotes>
+    <tags>git gitflow cli workflow branching</tags>
+  </metadata>
+</package>

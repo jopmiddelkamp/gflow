@@ -1,11 +1,11 @@
 mod common;
 
 use common::{MockEditor, MockGit, MockHosting, MockPrompter, MockVersionScript};
-use bflow::flows::start::{start_work_branch, start_release, start_release_fix, start_hotfix_fix, ReleaseType, detect_breaking_changes};
-use bflow::repo_config::{BumpStrategy, Mode, RepoConfig};
-use bflow::version::SemVer;
-use bflow::worktree::{open_worktree, WorktreeConfig, WorktreeContext, WorktreeEnv};
-use bflow::worktree_setup::SetupCommands;
+use gflow::flows::start::{start_work_branch, start_release, start_release_fix, start_hotfix_fix, ReleaseType, detect_breaking_changes};
+use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
+use gflow::version::SemVer;
+use gflow::worktree::{open_worktree, WorktreeConfig, WorktreeContext, WorktreeEnv};
+use gflow::worktree_setup::SetupCommands;
 use common::MockWorktreeSetup;
 
 fn patch_cfg() -> RepoConfig {
@@ -203,7 +203,7 @@ fn start_release_patch_protected_skips_branch_landed_via_squash_pr() {
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release/1.1.0".to_string(), "main".to_string()),
-        bflow::hosting::LandedPr {
+        gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/1".to_string(),
             head_sha: "relsha".to_string(),
             merge_commit_sha: "mc1".to_string(),
@@ -988,7 +988,7 @@ fn bump_develop_protected_deletes_leftover_local_chore_branch_before_recreating(
 #[test]
 fn bump_develop_protected_script_failure_restores_to_develop_then_release_branch() {
     // A failed M2 script run must not strand the operator on the chore
-    // branch: bflow best-effort restores develop first, so the outer warn
+    // branch: gflow best-effort restores develop first, so the outer warn
     // path's own final checkout (back to the release branch) still works.
     let mut git = MockGit::new();
     git.branches_matching = vec![];
@@ -1172,12 +1172,12 @@ fn hotfix_no_checkout_skips_script() {
 // git interaction — which ref is queried, and the develop → origin/develop
 // fallback.
 
-// --- Base-branch errors are rewritten into bflow's own guidance ---
+// --- Base-branch errors are rewritten into gflow's own guidance ---
 
 #[test]
 fn unknown_base_branch_error_is_rewritten_to_name_the_base_flag() {
     // decisions.md, Error Model: "Raw git errors are intercepted and rewritten
-    // when bflow knows better". git's "not a commit" is opaque; the user needs
+    // when gflow knows better". git's "not a commit" is opaque; the user needs
     // to be told the base does not exist and which flag fixes it.
     let mut git = MockGit::new();
     git.create_branch_error = Some("fatal: 'nope' is not a commit and a branch 'x' cannot be created from it".to_string());
@@ -1241,7 +1241,7 @@ fn start_hotfix_fix_worktree_active_discovers_and_opens() {
 fn start_hotfix_fix_worktree_mode_opens_a_worktree_for_the_new_hotfix_branch_too() {
     // A hotfix container is only ever created by `start hotfix-fix` — there is
     // no `start hotfix` to hand it a worktree later. Mirror of the release
-    // hand-off: the container gets its own worktree, so `bflow finish` has a
+    // hand-off: the container gets its own worktree, so `gflow finish` has a
     // checkout to run from without touching the main tree.
     let mut git = MockGit::new();
     git.branches_matching = vec![];

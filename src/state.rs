@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::version::SemVer;
 
 /// Folder under `.git/` holding one state file per in-progress finish.
-pub const STATE_DIR_NAME: &str = "bflow-finish";
+pub const STATE_DIR_NAME: &str = "gflow-finish";
 /// Pre-2.4 single global state file, migrated on startup if found.
-pub const LEGACY_STATE_FILE_NAME: &str = "bflow-finish.state";
+pub const LEGACY_STATE_FILE_NAME: &str = "gflow-finish.state";
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl FinishState {
             .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))
     }
 
-    /// One-time upgrade: move a pre-2.4 global `bflow-finish.state` file into the
+    /// One-time upgrade: move a pre-2.4 global `gflow-finish.state` file into the
     /// per-branch folder under its own source-branch key. A corrupt legacy file is
     /// dropped rather than bricking startup — the finish is idempotent and can be
     /// re-driven from its source branch.
@@ -130,7 +130,7 @@ impl FinishState {
         out.push_str(&format!("started_at={}\n", self.started_at));
         if let Some(message) = &self.stash_message {
             // Key stays `stash_ref=`: unknown keys are ignored for forward
-            // compatibility, so renaming it would make an older bflow silently
+            // compatibility, so renaming it would make an older gflow silently
             // drop a stash it must restore.
             out.push_str(&format!("stash_ref={message}\n"));
         }
@@ -169,7 +169,7 @@ impl FinishState {
         if version != SCHEMA_VERSION {
             return Err(format!(
                 "Unsupported state file version {version} (expected {SCHEMA_VERSION}). \
-                 Run 'bflow finish --abort' to discard."
+                 Run 'gflow finish --abort' to discard."
             ));
         }
         Ok(Self {
@@ -197,7 +197,7 @@ mod tests {
     use super::*;
 
     fn tmp_dir() -> PathBuf {
-        crate::test_support::tmp_dir("bflow-state-test")
+        crate::test_support::tmp_dir("gflow-state-test")
     }
 
     fn release(major: u32, minor: u32, patch: u32) -> FinishState {
@@ -214,7 +214,7 @@ mod tests {
             kind: FinishKind::Hotfix,
             major, minor, patch,
             started_at: "5678".to_string(),
-            stash_message: Some("bflow-finish:hotfix/2.5.2:5678".to_string()),
+            stash_message: Some("gflow-finish:hotfix/2.5.2:5678".to_string()),
         }
     }
 
@@ -230,7 +230,7 @@ mod tests {
         let s = hotfix(2, 5, 2);
         s.save(&dir).unwrap();
 
-        // File lives in the bflow-finish/ folder, keyed by the source branch.
+        // File lives in the gflow-finish/ folder, keyed by the source branch.
         let expected = dir.join(STATE_DIR_NAME).join("hotfix-2.5.2.state");
         assert!(expected.exists(), "state should be saved at {}", expected.display());
 
@@ -290,10 +290,10 @@ mod tests {
     #[test]
     fn unknown_keys_and_comments_are_ignored_for_forward_compatibility() {
         // decisions.md: the format has a `version=` field, and within a known
-        // version "unknown keys ignored (forward-compatible)". A newer bflow that
+        // version "unknown keys ignored (forward-compatible)". A newer gflow that
         // adds a field must not brick an older one standing on the same repo.
         let contents = "\
-# written by a newer bflow
+# written by a newer gflow
 version=1
 
 kind=release

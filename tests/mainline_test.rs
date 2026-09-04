@@ -1,7 +1,7 @@
 mod common;
 
 use common::MockGit;
-use bflow::mainline::{resolve_main_branch, MAIN_BRANCH_KEY};
+use gflow::mainline::{resolve_main_branch, MAIN_BRANCH_KEY};
 
 fn git_with_branches(local: &[&str], remote: &[&str]) -> MockGit {
     let mut git = MockGit::new();

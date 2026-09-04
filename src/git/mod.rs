@@ -64,7 +64,7 @@ pub trait Git {
     fn repo_root(&self) -> Result<PathBuf>;
     /// Absolute path to the root of the working tree the command is running in —
     /// the linked worktree when standing in one, the main tree otherwise. Repo
-    /// *content* (`.bflow/config`, the version script, PR templates) must be read
+    /// *content* (`.gflow/config`, the version script, PR templates) must be read
     /// from here: a linked worktree can have a different branch checked out than
     /// the main tree, and reading the main tree's copy would apply another
     /// branch's policy. Contrast `repo_root`, which is deliberately the MAIN

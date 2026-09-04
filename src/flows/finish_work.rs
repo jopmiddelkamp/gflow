@@ -101,7 +101,7 @@ fn detect_parent_branch(git: &dyn Git, prompter: &dyn Prompter, current: &str) -
         if parsed != BranchType::Develop && !parsed.is_work_branch() {
             continue;
         }
-        // chore/set-version-* is bflow-created and machine-owned: a protected
+        // chore/set-version-* is gflow-created and machine-owned: a protected
         // version bump merges and deletes it, which would strand a PR that
         // targeted it as a base.
         if branch.starts_with("chore/set-version-") {

@@ -1,6 +1,6 @@
 //! Discovery and execution of the repo's optional version-bump script.
 //!
-//! bflow looks for `.bflow/set-version.sh` (or `.bflow/set-version.cmd` on
+//! gflow looks for `.gflow/set-version.sh` (or `.gflow/set-version.cmd` on
 //! Windows) and, when present, runs it with the new version as the only
 //! argument. A repo with neither file behaves exactly as if this module did
 //! not exist — the caller sees `Ok(None)` and skips the step entirely.
@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const SCRIPT_UNIX: &str = ".bflow/set-version.sh";
-pub const SCRIPT_WINDOWS: &str = ".bflow/set-version.cmd";
+pub const SCRIPT_UNIX: &str = ".gflow/set-version.sh";
+pub const SCRIPT_WINDOWS: &str = ".gflow/set-version.cmd";
 
 /// Port for running the version script. A trait so flows can be tested
 /// without spawning a real process.
@@ -99,7 +99,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_dir() -> PathBuf {
-        crate::test_support::tmp_dir("bflow-version-script-test")
+        crate::test_support::tmp_dir("gflow-version-script-test")
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
         // scripts present it must pick this platform's file, same as
         // resolve_for(root, cfg!(windows)) would.
         let root = tmp_dir();
-        std::fs::create_dir_all(root.join(".bflow")).unwrap();
+        std::fs::create_dir_all(root.join(".gflow")).unwrap();
         std::fs::write(root.join(SCRIPT_UNIX), "#!/bin/sh\n").unwrap();
         std::fs::write(root.join(SCRIPT_WINDOWS), "@echo off\n").unwrap();
         let expected = if cfg!(windows) { SCRIPT_WINDOWS } else { SCRIPT_UNIX };
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn resolve_for_matching_platform_present_yields_its_path() {
         let root = tmp_dir();
-        std::fs::create_dir_all(root.join(".bflow")).unwrap();
+        std::fs::create_dir_all(root.join(".gflow")).unwrap();
         std::fs::write(root.join(SCRIPT_UNIX), "#!/bin/sh\n").unwrap();
         assert_eq!(resolve_for(&root, false).unwrap(), Some(root.join(SCRIPT_UNIX)));
         std::fs::remove_dir_all(&root).ok();
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn resolve_for_only_other_platform_present_errors_naming_both() {
         let root = tmp_dir();
-        std::fs::create_dir_all(root.join(".bflow")).unwrap();
+        std::fs::create_dir_all(root.join(".gflow")).unwrap();
         std::fs::write(root.join(SCRIPT_WINDOWS), "@echo off\n").unwrap();
         let err = resolve_for(&root, false).unwrap_err();
         assert!(err.contains(SCRIPT_UNIX), "got: {err}");
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn resolve_for_both_present_yields_own_platform() {
         let root = tmp_dir();
-        std::fs::create_dir_all(root.join(".bflow")).unwrap();
+        std::fs::create_dir_all(root.join(".gflow")).unwrap();
         std::fs::write(root.join(SCRIPT_UNIX), "#!/bin/sh\n").unwrap();
         std::fs::write(root.join(SCRIPT_WINDOWS), "@echo off\n").unwrap();
         assert_eq!(resolve_for(&root, true).unwrap(), Some(root.join(SCRIPT_WINDOWS)));
@@ -156,15 +156,15 @@ mod tests {
 
     #[test]
     fn interpret_exit_zero_is_ok() {
-        let path = Path::new(".bflow/set-version.sh");
+        let path = Path::new(".gflow/set-version.sh");
         assert_eq!(interpret(path, Some(0), ""), Ok(()));
     }
 
     #[test]
     fn interpret_nonzero_exit_names_path_code_stderr_and_remedy() {
-        let path = Path::new(".bflow/set-version.sh");
+        let path = Path::new(".gflow/set-version.sh");
         let err = interpret(path, Some(3), "boom\n").unwrap_err();
-        assert!(err.contains(".bflow/set-version.sh"), "got: {err}");
+        assert!(err.contains(".gflow/set-version.sh"), "got: {err}");
         assert!(err.contains("exit 3"), "got: {err}");
         assert!(err.contains("boom"), "got: {err}");
         assert!(err.contains("Fix the script, then re-run the command."), "got: {err}");
@@ -172,14 +172,14 @@ mod tests {
 
     #[test]
     fn interpret_signal_termination_names_path() {
-        let path = Path::new(".bflow/set-version.sh");
+        let path = Path::new(".gflow/set-version.sh");
         let err = interpret(path, None, "").unwrap_err();
-        assert_eq!(err, "Version script .bflow/set-version.sh was terminated by a signal.");
+        assert_eq!(err, "Version script .gflow/set-version.sh was terminated by a signal.");
     }
 
     #[test]
     fn script_cli_display_name_is_the_file_name() {
-        let script = ScriptCli::new(PathBuf::from("/repo/.bflow/set-version.sh"), PathBuf::from("/repo"));
+        let script = ScriptCli::new(PathBuf::from("/repo/.gflow/set-version.sh"), PathBuf::from("/repo"));
         assert_eq!(script.display_name(), "set-version.sh");
     }
 

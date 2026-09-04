@@ -175,7 +175,7 @@ them. A principle you did not run is a principle you did not apply.
 ## Documentation Sync
 
 When a change alters user-facing behavior — a command, flag, menu entry, config
-key, or error a user reads — update `README.md` and `.claude/skills/bflow/skill.md`
+key, or error a user reads — update `README.md` and `.claude/skills/gflow/skill.md`
 in the same change. Internal refactors, test-only work and version bumps do not
 need a docs edit (same "does NOT apply" list as Architectural Decisions above).
 

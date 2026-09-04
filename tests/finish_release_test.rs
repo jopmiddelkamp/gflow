@@ -1,8 +1,8 @@
 mod common;
 
 use common::{MockGit, MockHosting, MockVersionScript};
-use bflow::flows::finish_release::{bump_version, sync_with_develop, finish_release};
-use bflow::repo_config::{BumpStrategy, Mode, RepoConfig};
+use gflow::flows::finish_release::{bump_version, sync_with_develop, finish_release};
+use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
 
 fn patch_cfg() -> RepoConfig {
     RepoConfig { bump_strategy: BumpStrategy::Patch, ..RepoConfig::default() }
@@ -242,7 +242,7 @@ fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
-        bflow::hosting::LandedPr {
+        gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
             merge_commit_sha: "merge-commit-sha".to_string(),
@@ -331,7 +331,7 @@ fn bump_protected_cuts_the_deferred_tag_at_the_merge_commit_once_the_pr_lands() 
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
-        bflow::hosting::LandedPr {
+        gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
             merge_commit_sha: "merge-commit-sha".to_string(),
@@ -366,7 +366,7 @@ fn bump_protected_already_consumed_falls_through_to_the_fresh_path() {
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
-        bflow::hosting::LandedPr {
+        gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
             merge_commit_sha: "merge-commit-sha".to_string(),
@@ -445,7 +445,7 @@ fn bump_protected_reuses_a_leftover_remote_chore_branch_without_recreating_it() 
 fn bump_protected_deletes_leftover_local_chore_branch_before_recreating() {
     // A prior run crashed after `create_branch` but before the chore branch was
     // ever pushed: it exists locally only. Re-running must not die on git's raw
-    // "branch already exists" — the leftover is machine-owned, so bflow clears
+    // "branch already exists" — the leftover is machine-owned, so gflow clears
     // it itself before recreating.
     let mut git = MockGit::new();
     git.existing_local_branches.insert("release-chore/1.1.0/set-version".to_string());
@@ -479,7 +479,7 @@ fn bump_protected_deletes_leftover_local_chore_branch_before_recreating() {
 #[test]
 fn bump_protected_script_failure_returns_to_the_release_branch() {
     // A failed version script must not strand the operator on the chore
-    // branch: bflow best-effort restores the release branch before the error
+    // branch: gflow best-effort restores the release branch before the error
     // propagates, and never pushes or opens a PR for a run that never committed.
     let mut git = MockGit::new();
     git.working_tree_clean_seq.get_mut().extend([true]);
@@ -714,7 +714,7 @@ fn finish_release_patch_mode_gate_fires_when_head_past_latest_tag() {
     let err = finish_release(&git, &hosting, &patch_cfg(), 1, 1, "main", None, false).unwrap_err();
 
     assert!(err.contains("v1.1.1"), "error should name the latest patch tag; got: {err}");
-    assert!(err.contains("bflow bump"), "error should tell user to bump; got: {err}");
+    assert!(err.contains("gflow bump"), "error should tell user to bump; got: {err}");
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c.starts_with("checkout:main")),
         "guard must abort before touching main; calls: {calls:?}");
@@ -843,7 +843,7 @@ fn finish_release_fails_when_head_past_latest_rc() {
     assert!(result.is_err(), "expected guard to reject finish when HEAD is past latest RC");
     let err = result.unwrap_err();
     assert!(err.contains("v1.1.0-rc.2"), "error should name the latest RC tag; got: {err}");
-    assert!(err.contains("bflow bump"), "error should tell user to bump; got: {err}");
+    assert!(err.contains("gflow bump"), "error should tell user to bump; got: {err}");
     assert!(err.contains("2 commit"), "error should state how many commits past the RC; got: {err}");
 
     let calls = git.calls();
@@ -969,7 +969,7 @@ fn finish_release_main_merge_conflict_names_source_branch_to_switch_back() {
         "the commit step must come before git switch, which fails mid-merge; got: {err}");
     assert!(err.contains("git switch release/1.1.0"),
         "main conflict should tell user to switch back to the release branch; got: {err}");
-    assert!(err.contains("bflow finish"), "should mention re-running bflow finish; got: {err}");
+    assert!(err.contains("gflow finish"), "should mention re-running gflow finish; got: {err}");
 }
 
 #[test]
@@ -989,8 +989,8 @@ fn protected_cfg(keep: bool) -> RepoConfig {
     RepoConfig { mode: Mode::Protected, keep_release_branches: keep, ..RepoConfig::default() }
 }
 
-fn landed(head_sha: &str, merge_commit_sha: &str) -> bflow::hosting::LandedPr {
-    bflow::hosting::LandedPr {
+fn landed(head_sha: &str, merge_commit_sha: &str) -> gflow::hosting::LandedPr {
+    gflow::hosting::LandedPr {
         url: "https://github.com/org/repo/pull/1".to_string(),
         head_sha: head_sha.to_string(),
         merge_commit_sha: merge_commit_sha.to_string(),
@@ -1007,7 +1007,7 @@ fn protected_finish_rc_gate_blocks_before_pr() {
     let err = finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap_err();
 
     assert!(err.contains("v1.1.0-rc.2"), "got: {err}");
-    assert!(err.contains("bflow bump"), "got: {err}");
+    assert!(err.contains("gflow bump"), "got: {err}");
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
         "merged_pr_to:finish/release-1.1.0-into-main:main",
@@ -1242,7 +1242,7 @@ fn protected_finish_unlanded_main_pr_re_enters_the_rc_gate() {
     let err = finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap_err();
 
     assert!(err.contains("1 commit past"), "an unlanded main PR must re-enter the RC gate; got: {err}");
-    assert!(err.contains("bflow bump"), "got: {err}");
+    assert!(err.contains("gflow bump"), "got: {err}");
 }
 
 #[test]
@@ -1273,7 +1273,7 @@ fn protected_finish_keeps_branch_when_configured() {
 fn protected_finish_reports_commits_that_will_miss_the_release() {
     // The main leg landed, so the tag is cut at its merge commit and the leg is
     // never re-opened — but commits pushed after that merge are in neither the
-    // tag nor the mainline. bflow cannot put them there (the tag is published),
+    // tag nor the mainline. gflow cannot put them there (the tag is published),
     // so it counts them and says so instead of shipping in silence.
     let mut git = MockGit::new();
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
@@ -1950,7 +1950,7 @@ fn bump_protected_merged_pr_with_no_prior_tag_cuts_the_first_rc_at_the_merge_com
 fn protected_release_refuses_a_clean_tag_pointing_at_the_wrong_commit() {
     // The clean tag exists but points at neither the mainline nor the main
     // PR's merge commit — a stale or hand-created tag. Silently skipping it
-    // would ship the wrong commit as the release; bflow stops and names it.
+    // would ship the wrong commit as the release; gflow stops and names it.
     let mut git = MockGit::new();
     git.branch_shas.insert("release/1.1.0".to_string(), "relsha".to_string());
     git.existing_remote_branches.insert("release/1.1.0".to_string());
@@ -1977,7 +1977,7 @@ fn protected_release_refuses_a_clean_tag_pointing_at_the_wrong_commit() {
 fn tag_at_if_missing_skips_a_tag_already_at_the_right_commit() {
     // Doc contract: the equal-commit arm is unreachable through current
     // callers and stays as a guard for future ones — pinned here directly.
-    use bflow::flows::tag_at_if_missing;
+    use gflow::flows::tag_at_if_missing;
     let mut git = MockGit::new();
     git.existing_tags.insert("v1.1.0".to_string());
     git.tag_commits.insert("v1.1.0".to_string(), "mcF".to_string());
@@ -1992,7 +1992,7 @@ fn tag_at_if_missing_skips_a_tag_already_at_the_right_commit() {
 fn tip_landed_nowhere_provable_is_false() {
     // Doc contract: nothing provable → false, so cleanup keeps the branch
     // rather than delete commits that may never have landed.
-    use bflow::flows::tip_landed_somewhere;
+    use gflow::flows::tip_landed_somewhere;
     let mut git = MockGit::new();
     git.branch_shas.insert("release/1.1.0".to_string(), "tip".to_string());
 
@@ -2005,8 +2005,8 @@ fn tip_landed_nowhere_provable_is_false() {
 fn release_cleanup_with_unlanded_tip_keeps_the_branch() {
     // Last-resort guard behind the strict legs: completing with an unlanded
     // tip must warn and keep the branch, never delete commits.
-    use bflow::flows::finish_release::finish_release_cleanup;
-    use bflow::version::SemVer;
+    use gflow::flows::finish_release::finish_release_cleanup;
+    use gflow::version::SemVer;
     let git = MockGit::new();
 
     finish_release_cleanup(&git, &protected_cfg(false), "release/1.1.0", "main", &SemVer::new(1, 1, 0), false).unwrap();

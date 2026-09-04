@@ -1,2 +1,2 @@
 $toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-Remove-Item "$toolsDir\bflow.exe" -Force -ErrorAction SilentlyContinue
+Remove-Item "$toolsDir\gflow.exe" -Force -ErrorAction SilentlyContinue

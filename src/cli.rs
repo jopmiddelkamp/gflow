@@ -41,7 +41,7 @@ pub enum Commands {
         #[arg(long)]
         accept_merge_type: bool,
     },
-    /// Initialise this repository for bflow: writes .bflow/config (interactive)
+    /// Initialise this repository for gflow: writes .gflow/config (interactive)
     Init,
     /// Configure the optional worktree flow (run with no subcommand for an interactive setup)
     Worktree {
@@ -76,7 +76,7 @@ pub struct StartOptions {
     /// Create and push the branch without checking it out
     #[arg(long)]
     pub no_checkout: bool,
-    /// Skip the worktree flow for this command (when bflow.worktree.enabled is set)
+    /// Skip the worktree flow for this command (when gflow.worktree.enabled is set)
     #[arg(long)]
     pub no_worktree: bool,
 }
@@ -134,7 +134,7 @@ pub enum StartKind {
         major: bool,
         #[arg(long, conflicts_with = "major")]
         minor: bool,
-        /// Skip the worktree flow for this command (no effect unless bflow.worktree.enabled)
+        /// Skip the worktree flow for this command (no effect unless gflow.worktree.enabled)
         #[arg(long)]
         no_worktree: bool,
     },
@@ -175,7 +175,7 @@ fn require_release_branch(branch_type: &BranchType) -> Result<(), String> {
 
 /// Resolve the parsed command into an Action.
 ///
-/// `worktree_enabled` is the `bflow.worktree.enabled` config value. Like
+/// `worktree_enabled` is the `gflow.worktree.enabled` config value. Like
 /// `--no-checkout`, an active worktree flow auto-discovers the target branch for
 /// release-fix/hotfix-fix, so the "must be standing on it" branch-type gate only
 /// applies to the plain checkout path.

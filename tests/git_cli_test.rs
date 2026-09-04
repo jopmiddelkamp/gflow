@@ -3,7 +3,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::MockCommandRunner;
-use bflow::git::{Git, GitCli};
+use gflow::git::{Git, GitCli};
 
 // `GitCli` is the git adapter. Two things in it are worth pinning:
 //
@@ -66,25 +66,25 @@ fn a_command_killed_by_a_signal_is_a_failure_not_a_false() {
 
 #[test]
 fn an_unset_config_key_reads_as_none_rather_than_an_error() {
-    // `git config --get` exits 1 when the key is absent. Every bflow.* default
+    // `git config --get` exits 1 when the key is absent. Every gflow.* default
     // depends on that being "unset", not "git broke".
     let runner = MockCommandRunner::scripted(&[(1, "", "")]);
 
-    assert_eq!(git(&runner).get_config("bflow.worktree.enabled").unwrap(), None);
+    assert_eq!(git(&runner).get_config("gflow.worktree.enabled").unwrap(), None);
 }
 
 #[test]
 fn a_set_config_key_reads_back_trimmed() {
     let runner = MockCommandRunner::scripted(&[(0, "  cursor \n", "")]);
 
-    assert_eq!(git(&runner).get_config("bflow.worktree.editor").unwrap(), Some("cursor".to_string()));
+    assert_eq!(git(&runner).get_config("gflow.worktree.editor").unwrap(), Some("cursor".to_string()));
 }
 
 #[test]
 fn a_broken_config_read_is_still_an_error() {
     let runner = MockCommandRunner::scripted(&[(128, "", "fatal: not in a git directory\n")]);
 
-    assert!(git(&runner).get_config("bflow.worktree.editor").is_err());
+    assert!(git(&runner).get_config("gflow.worktree.editor").is_err());
 }
 
 #[test]
@@ -93,16 +93,16 @@ fn unsetting_an_already_unset_key_succeeds() {
     // must be idempotent — running it twice is not an error.
     let runner = MockCommandRunner::scripted(&[(5, "", "")]);
 
-    git(&runner).unset_config("bflow.worktree.path", true).unwrap();
+    git(&runner).unset_config("gflow.worktree.path", true).unwrap();
 
-    assert_eq!(runner.calls(), vec!["git config --global --unset bflow.worktree.path"]);
+    assert_eq!(runner.calls(), vec!["git config --global --unset gflow.worktree.path"]);
 }
 
 #[test]
 fn unset_config_still_fails_on_a_real_error() {
     let runner = MockCommandRunner::scripted(&[(4, "", "error: cannot lock config file\n")]);
 
-    let err = git(&runner).unset_config("bflow.worktree.path", false).unwrap_err();
+    let err = git(&runner).unset_config("gflow.worktree.path", false).unwrap_err();
 
     assert!(err.contains("exit 4"), "got: {err}");
 }
@@ -325,9 +325,9 @@ fn removing_the_current_worktree_runs_from_the_main_working_tree() {
 fn a_stash_is_found_by_its_message_and_returns_its_ref() {
     let runner = MockCommandRunner::ok(
         "stash@{0} On develop: someone else's work\n\
-         stash@{1} On develop: bflow-finish:release/2.5.0:1700000000\n");
+         stash@{1} On develop: gflow-finish:release/2.5.0:1700000000\n");
 
-    let found = git(&runner).find_stash_by_message("bflow-finish:release/2.5.0:1700000000").unwrap();
+    let found = git(&runner).find_stash_by_message("gflow-finish:release/2.5.0:1700000000").unwrap();
 
     assert_eq!(found, Some("stash@{1}".to_string()),
         "the index is looked up, never assumed — stash@{{0}} here belongs to the user");
@@ -337,7 +337,7 @@ fn a_stash_is_found_by_its_message_and_returns_its_ref() {
 fn an_absent_stash_message_yields_none_rather_than_a_guess() {
     let runner = MockCommandRunner::ok("stash@{0} On develop: unrelated work\n");
 
-    assert_eq!(git(&runner).find_stash_by_message("bflow-finish:release/2.5.0:1").unwrap(), None);
+    assert_eq!(git(&runner).find_stash_by_message("gflow-finish:release/2.5.0:1").unwrap(), None);
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn the_git_dir_is_read_as_a_path() {
 // These are one-line pass-throughs, but their *flags* are decisions, not
 // incidentals: `merge --no-ff` is what keeps release merges visible in history,
 // `stash push -u` is what makes untracked files survive a finish, `branch -D`
-// force-deletes a branch bflow has already confirmed is merged. A silent flag
+// force-deletes a branch gflow has already confirmed is merged. A silent flag
 // change is a behavior change, and nothing else in the suite would catch it.
 
 #[test]
@@ -375,7 +375,7 @@ fn every_primitive_issues_its_documented_git_command() {
         ("git merge origin/develop --ff-only", Box::new(|g| { g.ff_merge("origin/develop").ok(); })),
         ("git tag --list", Box::new(|g| { g.list_tags().ok(); })),
         ("git tag --merged release/2.5.0", Box::new(|g| { g.tags_on_branch("release/2.5.0").ok(); })),
-        // -D force-deletes: bflow only calls this once the branch is verifiably merged.
+        // -D force-deletes: gflow only calls this once the branch is verifiably merged.
         ("git branch -D feature/x", Box::new(|g| { g.delete_branch_local("feature/x").ok(); })),
         ("git push origin --delete feature/x", Box::new(|g| { g.delete_branch_remote("feature/x").ok(); })),
         ("git status --porcelain", Box::new(|g| { g.is_working_tree_clean().ok(); })),
@@ -396,9 +396,9 @@ fn every_primitive_issues_its_documented_git_command() {
         ("git log v2.5.0..develop --format=%B%x00", Box::new(|g| { g.commit_messages("v2.5.0", "develop").ok(); })),
         ("git rev-parse --git-dir", Box::new(|g| { g.git_dir().ok(); })),
         ("git remote get-url origin", Box::new(|g| { g.remote_url().ok(); })),
-        ("git config --get bflow.worktree.editor", Box::new(|g| { g.get_config("bflow.worktree.editor").ok(); })),
-        ("git config --global bflow.worktree.editor code", Box::new(|g| { g.set_config("bflow.worktree.editor", "code", true).ok(); })),
-        ("git config bflow.worktree.editor code", Box::new(|g| { g.set_config("bflow.worktree.editor", "code", false).ok(); })),
+        ("git config --get gflow.worktree.editor", Box::new(|g| { g.get_config("gflow.worktree.editor").ok(); })),
+        ("git config --global gflow.worktree.editor code", Box::new(|g| { g.set_config("gflow.worktree.editor", "code", true).ok(); })),
+        ("git config gflow.worktree.editor code", Box::new(|g| { g.set_config("gflow.worktree.editor", "code", false).ok(); })),
         ("git worktree add /repos/app-feature-x feature/x", Box::new(|g| { g.add_worktree(Path::new("/repos/app-feature-x"), "feature/x").ok(); })),
         // -C runs the same primitives in the tree that already holds the target
         // branch; the flags must stay identical to the current-tree variants.
@@ -409,7 +409,7 @@ fn every_primitive_issues_its_documented_git_command() {
         ("git rev-parse HEAD", Box::new(|g| { g.head_sha().ok(); })),
         ("git checkout --detach", Box::new(|g| { g.detach_head().ok(); })),
         // -u includes untracked files, so a finish never strands new files.
-        ("git stash push -u -m bflow-finish:develop:1", Box::new(|g| { g.stash_push_with_message("bflow-finish:develop:1").ok(); })),
+        ("git stash push -u -m gflow-finish:develop:1", Box::new(|g| { g.stash_push_with_message("gflow-finish:develop:1").ok(); })),
         ("git stash list --format=%gd %s", Box::new(|g| { g.find_stash_by_message("x").ok(); })),
         ("git stash pop stash@{1}", Box::new(|g| { g.stash_pop_ref("stash@{1}").ok(); })),
         ("git add -A", Box::new(|g| { g.stage_all().ok(); })),
@@ -450,7 +450,7 @@ fn a_mid_merge_repo_is_detected_from_the_marker_files_git_leaves() {
     use common::tmp_dir;
 
     for marker in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"] {
-        let dir = tmp_dir("bflow-midmerge");
+        let dir = tmp_dir("gflow-midmerge");
         let runner = MockCommandRunner::ok(dir.to_str().unwrap());
         std::fs::write(dir.join(marker), b"").unwrap();
 
@@ -461,7 +461,7 @@ fn a_mid_merge_repo_is_detected_from_the_marker_files_git_leaves() {
 #[test]
 fn a_repo_with_no_interrupted_operation_is_not_mid_merge() {
     use common::tmp_dir;
-    let dir = tmp_dir("bflow-midmerge");
+    let dir = tmp_dir("gflow-midmerge");
     let runner = MockCommandRunner::ok(dir.to_str().unwrap());
 
     assert!(!GitCli::new(&runner).is_mid_merge().unwrap());
@@ -488,13 +488,13 @@ fn worktree_of_is_none_when_no_tree_holds_the_branch() {
 #[test]
 fn find_stash_by_message_returns_the_matching_ref() {
     // The stash-pop path never pops blind: the ref comes from matching the
-    // bflow-written message in `git stash list`.
+    // gflow-written message in `git stash list`.
     let runner = MockCommandRunner::ok(
         "stash@{0} On develop: WIP unrelated\n\
-         stash@{1} On release/1.1.0: bflow-finish:release/1.1.0:123\n");
+         stash@{1} On release/1.1.0: gflow-finish:release/1.1.0:123\n");
 
     assert_eq!(
-        git(&runner).find_stash_by_message("bflow-finish:release/1.1.0:123").unwrap(),
+        git(&runner).find_stash_by_message("gflow-finish:release/1.1.0:123").unwrap(),
         Some("stash@{1}".to_string())
     );
 }

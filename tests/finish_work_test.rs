@@ -1,8 +1,8 @@
 mod common;
 
 use common::{MockGit, MockHosting, MockPrompter};
-use bflow::flows::finish_work::{finish_release_fix, finish_hotfix_fix, finish_release_chore, finish_work_branch};
-use bflow::git::branch::BranchType;
+use gflow::flows::finish_work::{finish_release_fix, finish_hotfix_fix, finish_release_chore, finish_work_branch};
+use gflow::git::branch::BranchType;
 
 #[test]
 fn finish_release_fix_pushes_and_creates_pr() {
@@ -202,7 +202,7 @@ fn finish_work_branch_with_local_only_base_errors() {
     let mut git = MockGit::new();
     git.current_branch = "feature/login".to_string();
     // Base exists locally but was never pushed: PR creation would fail on GitHub,
-    // so bflow must reject it up-front instead of pushing and then failing.
+    // so gflow must reject it up-front instead of pushing and then failing.
     git.existing_local_branches.insert("feature/auth".to_string());
     let hosting = MockHosting::new();
     let branch_type = BranchType::Feature { name: "login".to_string() };
@@ -282,12 +282,12 @@ fn finish_work_branch_passes_resolved_template_to_hosting() {
     git.current_branch = "feature/login".to_string();
     let hosting = MockHosting::new();
     let branch_type = BranchType::Feature { name: "login".to_string() };
-    let template = std::path::Path::new(".github/pr-templates/bflow-feature.md");
+    let template = std::path::Path::new(".github/pr-templates/gflow-feature.md");
 
     finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, Some(false), None, Some(template), false).unwrap();
 
     let calls = hosting.calls();
-    assert!(calls[1].ends_with(":template=.github/pr-templates/bflow-feature.md"),
+    assert!(calls[1].ends_with(":template=.github/pr-templates/gflow-feature.md"),
         "template path must reach the hosting platform verbatim, got: {}", calls[1]);
 }
 
@@ -408,7 +408,7 @@ fn develop_is_offered_even_when_it_already_contains_our_tip() {
 
 #[test]
 fn machine_owned_chore_set_version_branch_is_never_offered_as_pr_target() {
-    // chore/set-version-* branches are bflow-created and get merged/deleted by
+    // chore/set-version-* branches are gflow-created and get merged/deleted by
     // a protected-mode version bump; targeting one as a PR base would strand
     // the PR when that branch disappears out from under it.
     let mut git = MockGit::new();
@@ -428,7 +428,7 @@ fn machine_owned_chore_set_version_branch_is_never_offered_as_pr_target() {
 
 // --- Already-merged PR: finish is complete, clean up instead of a new PR ---
 
-use bflow::hosting::MergedPr;
+use gflow::hosting::MergedPr;
 
 fn merged(url: &str, sha: &str, base: &str) -> Option<MergedPr> {
     Some(MergedPr { url: url.to_string(), head_sha: sha.to_string(), merge_commit_sha: format!("merge-of-{sha}"), base: base.to_string() })

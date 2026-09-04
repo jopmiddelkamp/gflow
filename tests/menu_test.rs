@@ -1,9 +1,9 @@
 mod common;
 
 use common::MockPrompter;
-use bflow::action::Action;
-use bflow::git::branch::BranchType;
-use bflow::menu::show_menu;
+use gflow::action::Action;
+use gflow::git::branch::BranchType;
+use gflow::menu::show_menu;
 
 // `show_menu` is the interactive half of "one Action enum is the single
 // currency" (decisions.md, CLI/UX Conventions) — the branch-type gating table

@@ -3,11 +3,11 @@ mod common;
 use std::fs;
 
 use common::MockPrompter;
-use bflow::init::{ensure, run, wizard};
-use bflow::repo_config::{self, BumpStrategy, Mode, RepoConfig, NOT_INITIALISED};
+use gflow::init::{ensure, run, wizard};
+use gflow::repo_config::{self, BumpStrategy, Mode, RepoConfig, NOT_INITIALISED};
 
 fn root() -> common::TempDir {
-    common::tmp_dir("bflow-init-test")
+    common::tmp_dir("gflow-init-test")
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn wizard_asks_the_three_policy_questions_and_writes_the_answers() {
         "select:Release branches after finish:[delete (default), keep]",
         "select:Bump strategy:[rc — pre-release tags, one clean tag at finish (default), patch — real patch version on every bump]",
     ]);
-    assert_eq!(fs::read_to_string(root.join(".bflow").join("config")).unwrap(),
+    assert_eq!(fs::read_to_string(root.join(".gflow").join("config")).unwrap(),
         "mode=protected\nkeep-release-branches=true\nbump-strategy=patch\n");
 }
 
@@ -76,7 +76,7 @@ fn run_refuses_when_already_initialised() {
     let root = root();
     repo_config::write(&root, &RepoConfig::default()).unwrap();
     let err = run(&MockPrompter::new(), &root).unwrap_err();
-    assert_eq!(err, "Already initialised: edit .bflow/config directly (mode, keep-release-branches, bump-strategy).");
+    assert_eq!(err, "Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy).");
 }
 
 #[test]

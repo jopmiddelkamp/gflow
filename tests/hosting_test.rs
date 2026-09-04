@@ -1,9 +1,9 @@
 mod common;
 
 use common::MockCliRunner;
-use bflow::hosting::devops::AzureDevOps;
-use bflow::hosting::github::GitHub;
-use bflow::hosting::{HostingPlatform, PrBody};
+use gflow::hosting::devops::AzureDevOps;
+use gflow::hosting::github::GitHub;
+use gflow::hosting::{HostingPlatform, PrBody};
 
 // The provider adapters carry real policy on top of `gh`/`az`: when an existing
 // PR is reused vs. a new one created, which CLI failures are normal and which
@@ -105,10 +105,10 @@ fn a_real_gh_failure_is_fatal_and_names_the_auth_fix() {
 fn a_resolved_template_is_passed_as_a_body_file() {
     let runner = MockCliRunner::scripted(&[Ok(""), Ok("https://github.com/o/r/pull/10")]);
 
-    gh(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::File(".github/pr-templates/bflow-feature.md")).unwrap();
+    gh(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::File(".github/pr-templates/gflow-feature.md")).unwrap();
 
     assert_eq!(runner.calls()[1],
-        "gh pr create --head feature/x --base develop --title feat: x --body-file .github/pr-templates/bflow-feature.md");
+        "gh pr create --head feature/x --base develop --title feat: x --body-file .github/pr-templates/gflow-feature.md");
 }
 
 #[test]

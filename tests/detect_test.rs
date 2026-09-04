@@ -1,7 +1,7 @@
 mod common;
 
 use common::MockGit;
-use bflow::hosting::detect::{detect, Provider};
+use gflow::hosting::detect::{detect, Provider};
 
 // `detect` is the thin shell over the pure `resolve`/`parse_remote` core (unit
 // tested in-module): it reads the override key and the origin remote, in that
@@ -22,14 +22,14 @@ fn reads_the_override_key_then_the_origin_remote() {
     git.remote_url = "https://dev.azure.com/beans/Shop/_git/backend".to_string();
 
     assert_eq!(detect(&git).unwrap(), ado("beans", "Shop", "backend"));
-    assert_eq!(git.calls(), vec!["get_config:bflow.hosting.provider", "remote_url"]);
+    assert_eq!(git.calls(), vec!["get_config:gflow.hosting.provider", "remote_url"]);
 }
 
 #[test]
 fn the_configured_override_wins_over_the_remote() {
     let mut git = MockGit::new();
     git.remote_url = "https://dev.azure.com/beans/Shop/_git/backend".to_string();
-    git.config.insert("bflow.hosting.provider".to_string(), "github".to_string());
+    git.config.insert("gflow.hosting.provider".to_string(), "github".to_string());
 
     assert_eq!(detect(&git).unwrap(), Provider::GitHub);
 }
@@ -51,7 +51,7 @@ fn a_devops_override_without_an_origin_remote_is_a_hard_error() {
     // than silently fall back to GitHub.
     let mut git = MockGit::new();
     git.fail_remote_url = true;
-    git.config.insert("bflow.hosting.provider".to_string(), "devops".to_string());
+    git.config.insert("gflow.hosting.provider".to_string(), "devops".to_string());
 
     let err = detect(&git).unwrap_err();
 
