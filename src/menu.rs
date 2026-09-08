@@ -216,8 +216,9 @@ fn read_raw_line(prompt: &str, transform: impl Fn(&str, char) -> Option<char>) -
         }
     };
 
-    // Move to the next line; the guard disables raw mode on drop.
-    let _ = execute!(out, cursor::MoveToNextLine(1));
+    // A real newline, not a cursor move: on the terminal's last row a cursor
+    // move cannot scroll, so the next output would overwrite this prompt.
+    let _ = execute!(out, style::Print("\r\n"));
     Ok(result)
 }
 
@@ -243,7 +244,7 @@ pub fn prompt_name(prompt: &str) -> Result<String, String> {
                 let _ = execute!(
                     io::stderr(),
                     style::PrintStyledContent(format!("  {e}").red()),
-                    cursor::MoveToNextLine(1),
+                    style::Print("\r\n"),
                 );
                 // Loop to re-prompt
             }
