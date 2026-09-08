@@ -85,8 +85,11 @@ pub struct MockGit {
     pub git_dir: PathBuf,
     /// Stash messages currently in the stash list (most recent first).
     pub stashes: RefCell<Vec<String>>,
-    /// git config values returned by `get_config` (key -> value).
+    /// Local-scope git config (key -> value). `get_config` falls back to
+    /// `config_global`, mirroring git's own precedence.
     pub config: HashMap<String, String>,
+    /// Global-scope git config (key -> value).
+    pub config_global: HashMap<String, String>,
     /// URL returned by `remote_url`.
     pub remote_url: String,
     /// `remote_url` fails (a repo with no `origin` configured).
@@ -151,6 +154,7 @@ impl MockGit {
             git_dir: PathBuf::from(".git"),
             stashes: RefCell::new(Vec::new()),
             config: HashMap::new(),
+            config_global: HashMap::new(),
             remote_url: "https://github.com/acme/repo.git".to_string(),
             fail_remote_url: false,
             repo_root: PathBuf::from("/repos/beans-gitflow"),
@@ -381,7 +385,13 @@ impl Git for MockGit {
 
     fn get_config(&self, key: &str) -> Result<Option<String>, String> {
         self.calls.borrow_mut().push(format!("get_config:{key}"));
-        Ok(self.config.get(key).cloned())
+        Ok(self.config.get(key).or_else(|| self.config_global.get(key)).cloned())
+    }
+    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>, String> {
+        let scope = if global { "global" } else { "local" };
+        self.calls.borrow_mut().push(format!("get_config_at:{scope}:{key}"));
+        let source = if global { &self.config_global } else { &self.config };
+        Ok(source.get(key).cloned())
     }
 
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<(), String> {

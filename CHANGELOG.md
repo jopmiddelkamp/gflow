@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-09-08
+
+### Added
+- Configuration is now layered across three files, later overriding earlier key by key: `~/.gflow/config` (you, every repository) → `<repo>/.gflow/config` (this repository, committed) → `<repo>/.gflow/config.local` (you, this repository, gitignored). A layer that does not mention a key never undoes a lower one.
+- New `--repo` flag on `gflow worktree`, writing the repository's committed `.gflow/config`. `--local` now writes `.gflow/config.local`, which is yours alone and never committed. No flag still writes `~/.gflow/config`. `--repo` and `--local` conflict.
+- `~/.gflow/config` can supply the landing policy, so a throwaway repository no longer needs its own committed `.gflow/config` or a `gflow init` run. A repo with no config file in any layer is still "not initialised".
+- The worktree settings are now file keys — `worktree`, `editor`, `path` — readable and editable by hand. Layers 1 and 2 take every key; `config.local` takes only these three. `mode`, `keep-release-branches`, and `bump-strategy` found there are reported and ignored: a private opt-out of `mode=protected` would defeat the guarantee the committed file makes.
+
+### Changed
+- `gflow worktree enable|disable|editor|path` and the interactive wizard write config files instead of `gflow.worktree.*` git config. Existing commands and the `--local` flag keep working; each message now names the file it wrote.
+- gflow writes and maintains `<repo>/.gflow/.gitignore` itself so the private layer is never committed. It ignores itself too, so gflow's bookkeeping never appears as untracked noise, and your repository's own `.gitignore` is never touched.
+
+### Fixed
+- The name prompt no longer gets overwritten by the next message when it lands on the terminal's bottom row. The prompt ended with a cursor-move escape, which cannot scroll the screen, so `Fetching latest...` printed on top of it and left the tail of the prompt visible.
+- Azure DevOps: finishing or resuming a leg no longer fails with `Unexpected merged-PR data from az`. The merged-PR queries asked az for a flat list of values, which its TSV writer prints one per line instead of as a single tab-separated row.
+
+### Migration
+- Automatic and silent. On the first run, any `gflow.worktree.*` git config moves into the new files in the scope it was set in — global keys to `~/.gflow/config`, `--local` keys to that repository's `.gflow/config.local` — and the git keys are unset. Local git config was never committed, so it stays uncommitted; nothing appears in `git status`. A value the file already states wins; the stale git key is still cleaned up.
+- `gflow.branch.main` and `gflow.hosting.provider` stay in git config and are untouched: they are detection caches gflow writes back itself, not settings you chose.
+
 ## [4.0.0] - 2026-09-04
 
 ### Changed

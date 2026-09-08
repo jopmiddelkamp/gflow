@@ -37,18 +37,18 @@ gflow start hotfix-fix --name <name> [--no-checkout] [--no-worktree]  # from the
 
 Either name works. On its first run in a repo gflow detects which exists and
 saves it to `gflow.branch.main` (**local** scope — the mainline belongs to the
-repo, unlike `gflow.worktree.*`), announcing the save. Set it yourself with
+repo, unlike the worktree settings), announcing the save. Set it yourself with
 `git config gflow.branch.main master`. Only `main` and `master` are accepted;
 anything else is a hard error. Everything below that says "main" means this
 resolved branch.
 
 #### Worktree integration (optional)
 
-When `gflow.worktree.enabled=true` (git config), every `start` creates the branch in a native git worktree and opens it in an editor instead of switching the current checkout (`start release` creates and tags in the current checkout first, returns it to `develop`, then opens the release worktree; a release already held by a worktree is only announced). `start hotfix-fix` also opens a worktree for the `hotfix/{v}` container branch — before the fix branch's own worktree, so the fix keeps editor focus; a hotfix already held by a worktree is only announced. After creating a worktree and before opening the editor, gflow runs the repo's `.cursor/worktrees.json` / `worktrees.json` setup commands if present (Cursor / worktree-cli format: each entry a shell command in the new worktree, `$ROOT_WORKTREE_PATH` = main checkout, failures reported and the rest still run, never fails the start). Strict JSON only; an unparsable file warns (naming file + byte offset, trailing commas called out) and is skipped — it never blocks a command, and with the flow disabled it is not read. No prompt, no config — the committed file is the opt-in. Config keys: `gflow.worktree.enabled` (bool, default false), `gflow.worktree.editor` (default `code`; `none` skips opening), `gflow.worktree.path` (base dir, default repo's parent, `~` expanded). Folder name: `<repo-name>-<branch-with-slashes-as-dashes>`. `--no-worktree` skips it for one command. Like `--no-checkout`, active worktree mode relaxes the branch-type check for `release-fix`/`hotfix-fix` (target branch is discovered automatically).
+When `worktree=true`, every `start` creates the branch in a native git worktree and opens it in an editor instead of switching the current checkout (`start release` creates and tags in the current checkout first, returns it to `develop`, then opens the release worktree; a release already held by a worktree is only announced). `start hotfix-fix` also opens a worktree for the `hotfix/{v}` container branch — before the fix branch's own worktree, so the fix keeps editor focus; a hotfix already held by a worktree is only announced. After creating a worktree and before opening the editor, gflow runs the repo's `.cursor/worktrees.json` / `worktrees.json` setup commands if present (Cursor / worktree-cli format: each entry a shell command in the new worktree, `$ROOT_WORKTREE_PATH` = main checkout, failures reported and the rest still run, never fails the start). Strict JSON only; an unparsable file warns (naming file + byte offset, trailing commas called out) and is skipped — it never blocks a command, and with the flow disabled it is not read. No prompt, no config — the committed file is the opt-in. Config keys (in the layered config files, not git config): `worktree` (bool, default false), `editor` (default `code`; `none` skips opening), `path` (base dir, default repo's parent, `~` expanded). Folder name: `<repo-name>-<branch-with-slashes-as-dashes>`. `--no-worktree` skips it for one command. Like `--no-checkout`, active worktree mode relaxes the branch-type check for `release-fix`/`hotfix-fix` (target branch is discovered automatically) — but standing on a `release/{v}`/`hotfix/{v}` branch still wins over discovery, and discovery takes the newest open version.
 
 `finish` (release/hotfix) works from any worktree: a merge target checked out in another worktree is merged there in place (`git -C`); that tree must be clean or gflow refuses, naming the path.
 
-Configure it with the `gflow worktree` command (writes global git config; `--local` for one repo):
+Configure it with the `gflow worktree` command (writes `~/.gflow/config`; `--repo` writes the repo's committed `<repo>/.gflow/config`, `--local` writes the gitignored `<repo>/.gflow/config.local`; `--repo` and `--local` conflict):
 
 ```bash
 gflow worktree                     # interactive setup (enable / editor / location)
@@ -104,7 +104,7 @@ Opt-in: with no `.github/pr-templates/`, behavior is unchanged.
 gflow init   # one-time; writes .gflow/config via three questions — commit the file
 ```
 
-A repo without `.gflow/config` is **not initialised**: the interactive menu offers the wizard, subcommands fail with `run 'gflow init'`.
+A repo with **no config file in any layer** is not initialised: the interactive menu offers the wizard, subcommands fail with `run 'gflow init'`. A `~/.gflow/config` that states a policy is enough — a throwaway repo then needs no committed file.
 
 ### Release-only commands
 
@@ -115,7 +115,9 @@ gflow sync [--accept-merge-type] # merge release into develop (on release/* only
 
 ### Landing modes & version script
 
-`.gflow/config` (committed file, not git config — repo policy, not per-clone; **required** — `gflow init` creates it, see above): `mode=free|protected` (default `free` = today's behavior), `keep-release-branches=true|false` (default `false`; skips deleting `release/*`/`hotfix/*` on finish, work branches unaffected), `bump-strategy=rc|patch` (default `rc`; see Tag Strategy).
+Config is three layers, later overriding earlier per key: `~/.gflow/config` (you, all repos; written by `gflow worktree ...`) → `<repo>/.gflow/config` (this repo, committed; `--repo`) → `<repo>/.gflow/config.local` (you, this repo, gitignored; `--local`). A silent layer never undoes a lower one. Layers 1-2 take every key; layer 3 takes only `worktree`/`editor`/`path` — team keys there are warned about and ignored, so nobody can privately opt out of `mode=protected`. gflow maintains `<repo>/.gflow/.gitignore` itself (self-ignoring, so it is never untracked noise) and never edits the repo's own `.gitignore`. 4.0.x `gflow.worktree.*` git config migrates automatically on first run, per scope (global → `~/.gflow/config`, `--local` → `config.local`, which stays uncommitted as it always was); only the detection caches `gflow.branch.main` and `gflow.hosting.provider` stay in git config.
+
+`.gflow/config` (committed file, not git config — repo policy, not per-clone): `mode=free|protected` (default `free` = today's behavior), `keep-release-branches=true|false` (default `false`; skips deleting `release/*`/`hotfix/*` on finish, work branches unaffected), `bump-strategy=rc|patch` (default `rc`; see Tag Strategy).
 
 **`mode=protected`** — `main`/`develop` require PRs. `finish`/`bump`/`sync` open (or reuse) a PR for every landing instead of merging directly, print a bare title + URL block (bold title on a TTY; also copied to the clipboard, silently skipped without a clipboard tool), and **exit 0** — gflow never merges a PR. **Re-run the same command after a human merges it.** Every landing PR's head is a throwaway `finish/<source>-into-<target>` branch gflow cuts from the source and deletes at completion. gflow merges the target into the finish branch on every run, so landing PRs are born mergeable: a conflict surfaces mid-run and **leaves the current worktree ON the finish branch**, mid-merge (gflow says so) — resolve there, `git add . && git commit --no-edit`, re-run (the re-run switches the worktree back to the source branch itself and pushes; `git merge --abort && git switch <source>` backs out). A PR that conflicts later (target moved) heals by re-running. Never rebase a finish branch; the release/hotfix branch is never touched. One PR per run, in order (main → develop → each open release branch for hotfixes). Develop/release legs are strict: a landing that predates newer source commits re-opens with a refreshed finish branch, so commits cannot silently miss a target (this also covers a mid-release `sync` followed by more release fixes). Only the last landing deletes the source branch plus all finish branches. Nothing is stored on disk to resume — progress is re-derived from PR/tag state each run. Migration: an OPEN landing PR with the release/hotfix branch as head (older gflow) is a hard error — merge or close it, then re-run. Don't add new, unrelated work to a release branch once its `main` PR has merged (the clean tag is already placed) — ship fixes as a hotfix instead.
 
@@ -131,7 +133,7 @@ gflow sync [--accept-merge-type] # merge release into develop (on release/* only
 
 ### Tag Strategy
 
-Selected per repo via `bump-strategy` in `.gflow/config`. All tags use the `v` prefix.
+Selected per repo via `bump-strategy` in `.gflow/config`. gflow writes `v`-prefixed tags; a plain `X.Y.Z` tag is read as the same version (latest lookup, shipped detection).
 
 **`rc` (default)** — SemVer pre-release tags for CI integration:
 
@@ -170,7 +172,7 @@ gflow start feature --name login --base feature/auth
 
 ### When to use `--no-checkout`
 
-Creates and pushes the branch without switching to it. Designed for git worktree workflows where the branch will be opened in a separate worktree. With `--no-checkout`: stash/merge of current branch is skipped, and branch-type validation is relaxed for `release-fix` and `hotfix-fix` (the target branch is discovered automatically).
+Creates and pushes the branch without switching to it. Designed for git worktree workflows where the branch will be opened in a separate worktree. With `--no-checkout`: stash/merge of current branch is skipped, and branch-type validation is relaxed for `release-fix` and `hotfix-fix` (the target branch is discovered automatically — newest open version — unless you already stand on a `release/{v}`/`hotfix/{v}` branch, which then wins).
 
 Not available for `start release`.
 
@@ -195,7 +197,7 @@ Not available for `start release`.
 
 **Rule:** Always provide all required arguments so the command runs non-interactively. Never run bare `gflow` without arguments from a non-interactive context.
 
-**The repo must be initialised** (`.gflow/config` committed) — subcommands refuse otherwise; run `gflow init` once interactively.
+**The repo must be initialised** (`.gflow/config` committed, or a `~/.gflow/config` supplying the policy) — subcommands refuse otherwise; run `gflow init` once interactively.
 
 ## Prerequisites
 

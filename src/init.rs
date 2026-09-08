@@ -4,19 +4,28 @@
 use std::path::Path;
 
 use crate::prompt::Prompter;
-use crate::repo_config::{self, BumpStrategy, Mode, RepoConfig, NOT_INITIALISED};
+use crate::repo_config::{self, BumpStrategy, Layers, Mode, RepoConfig, NOT_INITIALISED};
 
 const ALREADY: &str = "Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy).";
 
-/// Load the repo policy, running the wizard first when the repo has none and
-/// the run is interactive. Non-interactive runs (subcommands, CI) refuse.
-pub fn ensure(prompter: &dyn Prompter, repo_root: &Path, interactive: bool) -> Result<RepoConfig, String> {
-    if repo_config::exists(repo_root) {
-        return repo_config::load(repo_root);
+/// Resolve the config layer stack, running the wizard first when *no* layer
+/// states a policy and the run is interactive. A global `~/.gflow/config` is
+/// enough: a throwaway repo does not need its own committed file.
+/// Non-interactive runs (subcommands, CI) with nothing anywhere refuse.
+pub fn ensure(
+    prompter: &dyn Prompter,
+    home: Option<&Path>,
+    repo_root: &Path,
+    interactive: bool,
+) -> Result<Layers, String> {
+    let layers = repo_config::load_layers(home, Some(repo_root))?;
+    if layers.initialised {
+        return Ok(layers);
     }
     if interactive {
         println!("This repository is not initialised for gflow yet.\n");
-        return wizard(prompter, repo_root);
+        wizard(prompter, repo_root)?;
+        return repo_config::load_layers(home, Some(repo_root));
     }
     Err(NOT_INITIALISED.to_string())
 }

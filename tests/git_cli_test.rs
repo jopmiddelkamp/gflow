@@ -74,6 +74,29 @@ fn an_unset_config_key_reads_as_none_rather_than_an_error() {
 }
 
 #[test]
+fn a_scoped_read_asks_git_for_that_scope_only() {
+    // `get_config` returns the *effective* value, which cannot tell a local
+    // override from a global default. The config migration has to know which
+    // file a value belongs in, so it reads each scope explicitly.
+    let runner = MockCommandRunner::scripted(&[(0, "cursor\n", "")]);
+
+    let value = git(&runner).get_config_at("gflow.worktree.editor", true).unwrap();
+
+    assert_eq!(value, Some("cursor".to_string()));
+    assert_eq!(runner.calls(), vec!["git config --global --get gflow.worktree.editor"]);
+}
+
+#[test]
+fn a_scoped_read_of_the_local_scope_never_falls_back_to_global() {
+    let runner = MockCommandRunner::scripted(&[(1, "", "")]);
+
+    let value = git(&runner).get_config_at("gflow.worktree.editor", false).unwrap();
+
+    assert_eq!(value, None, "unset in this scope means unset, not inherited");
+    assert_eq!(runner.calls(), vec!["git config --local --get gflow.worktree.editor"]);
+}
+
+#[test]
 fn a_set_config_key_reads_back_trimmed() {
     let runner = MockCommandRunner::scripted(&[(0, "  cursor \n", "")]);
 

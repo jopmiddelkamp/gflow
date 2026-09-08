@@ -50,14 +50,14 @@ fn ensure_loads_an_existing_config_without_prompting() {
     repo_config::write(&root, &cfg).unwrap();
     let prompter = MockPrompter::new();
 
-    assert_eq!(ensure(&prompter, &root, true).unwrap(), cfg);
+    assert_eq!(ensure(&prompter, None, &root, true).unwrap().settings.resolve(), cfg);
     assert!(prompter.calls().is_empty());
 }
 
 #[test]
 fn ensure_runs_the_wizard_when_missing_and_interactive() {
     let root = root();
-    let cfg = ensure(&MockPrompter::scripted(&[0, 1, 0]), &root, true).unwrap();
+    let cfg = ensure(&MockPrompter::scripted(&[0, 1, 0]), None, &root, true).unwrap().settings.resolve();
     assert!(cfg.keep_release_branches);
     assert!(repo_config::exists(&root));
 }
@@ -66,7 +66,7 @@ fn ensure_runs_the_wizard_when_missing_and_interactive() {
 fn ensure_refuses_when_missing_and_non_interactive() {
     let root = root();
     let prompter = MockPrompter::new();
-    assert_eq!(ensure(&prompter, &root, false).unwrap_err(), NOT_INITIALISED);
+    assert_eq!(ensure(&prompter, None, &root, false).unwrap_err(), NOT_INITIALISED);
     assert!(prompter.calls().is_empty());
     assert!(!repo_config::exists(&root));
 }
@@ -84,4 +84,35 @@ fn run_initialises_a_fresh_repo() {
     let root = root();
     run(&MockPrompter::scripted(&[0, 0, 1]), &root).unwrap();
     assert_eq!(repo_config::load(&root).unwrap().bump_strategy, BumpStrategy::Patch);
+}
+
+#[test]
+fn a_repo_with_no_config_is_initialised_by_the_global_file() {
+    // The playground case: `~/.gflow/config` supplies the policy, so a throwaway
+    // repo needs no `gflow init` and no committed file.
+    let home = root();
+    let repo = root();
+    fs::create_dir_all(home.join(".gflow")).unwrap();
+    fs::write(home.join(".gflow").join("config"), "mode=protected\nworktree=true\n").unwrap();
+    let prompter = MockPrompter::aborting();
+
+    let layers = ensure(&prompter, Some(&home), &repo, false).unwrap();
+
+    assert!(layers.initialised);
+    assert_eq!(layers.settings.worktree, Some(true));
+    assert_eq!(layers.settings.clone().resolve().mode, Mode::Protected);
+    assert!(prompter.calls().is_empty(), "no wizard: the policy is already stated");
+}
+
+#[test]
+fn the_committed_repo_file_still_overrides_the_global_one() {
+    let home = root();
+    let repo = root();
+    fs::create_dir_all(home.join(".gflow")).unwrap();
+    fs::write(home.join(".gflow").join("config"), "mode=protected\n").unwrap();
+    repo_config::write(&repo, &RepoConfig { mode: Mode::Free, keep_release_branches: false, bump_strategy: BumpStrategy::Rc }).unwrap();
+
+    let layers = ensure(&MockPrompter::aborting(), Some(&home), &repo, false).unwrap();
+
+    assert_eq!(layers.settings.resolve().mode, Mode::Free);
 }
