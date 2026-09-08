@@ -73,3 +73,43 @@ read `git status --short` before claiming a commit contains a file.
 - 2026-09-01: Edited `.claude/skills/gflow/skill.md` twice before remembering
   the skill-sync-reminder skill must run whenever any skill file changes.
   Trigger it on EVERY skill-file edit, in the same turn as the edit.
+
+## Config scope flags: ask which file, not which scope (2026-09-08)
+
+**What happened.** Built `gflow worktree --local` three times. v1 wrote a private
+gitignored file, v2 the repo's committed file, v3 added `--repo` so both exist.
+Two rounds of rework.
+
+**Why.** "Local" is ambiguous. It can mean *this repository* (as opposed to all
+of them) or *just me* (as opposed to the team). Git config uses it for the first
+sense; I assumed the second because I was reasoning about what *should* be
+shared. I argued the design from principle instead of asking one question.
+
+**Rule.** When a flag means "write somewhere other than the default", confirm the
+**file path**, not the scope word. Show the user the literal mapping before
+building:
+
+```
+<cmd>          -> ~/.x/config
+<cmd> --repo   -> <repo>/.x/config
+<cmd> --local  -> <repo>/.x/config.local
+```
+
+Three lines. It would have saved both rewrites.
+
+## A sibling flow is not the same bug until you read it (2026-09-08)
+
+**What happened.** After fixing `start release-fix`, I told the user
+`start hotfix-fix` had "the same bug shape". It did not: the hotfix flow never
+read HEAD in any mode, so worktree mode changed nothing there. The crash half
+was real, the "wrong branch" half was overstated. The user had to ask
+"are you sure?" before I checked.
+
+**Why.** I extrapolated from structural similarity (both call
+`open_versioned_branches(...).first()`) to behavioral identity, and I stated it
+as a finding instead of a hypothesis.
+
+**Rule.** Before claiming a sibling has the same defect, read the sibling's
+code path end to end and, when the claim is about git behavior, run the
+command against a scratch repo. Report what was verified and what was not, in
+separate sentences. "Probably the same" is a hypothesis; say so.

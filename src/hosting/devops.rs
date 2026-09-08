@@ -46,6 +46,10 @@ impl<'a> AzureDevOps<'a> {
     /// tsv row of the merged-PR query. Empty output is the normal "no PR" case; a
     /// row whose status isn't `completed` means the newest PR is open/abandoned →
     /// `None`.
+    ///
+    /// The queries feeding this select over a `[0:1]` slice, never `[0]`: az's tsv
+    /// writer prints a flat list of scalars one value per line, and only a list of
+    /// lists as a tab-separated row.
     fn parse_merged_pr_row(&self, row: &str) -> Result<Option<MergedPr>> {
         let row = row.trim();
         if row.is_empty() {
@@ -184,7 +188,7 @@ impl HostingPlatform for AzureDevOps<'_> {
         args.extend([
             "--source-branch".into(), head.into(),
             "--status".into(), "all".into(),
-            "--query".into(), "[0].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, targetRefName, pullRequestId]".into(),
+            "--query".into(), "[0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, targetRefName, pullRequestId]".into(),
             "-o".into(), "tsv".into(),
         ]);
         let row = self.run_az(&args)?;
@@ -203,7 +207,7 @@ impl HostingPlatform for AzureDevOps<'_> {
             "--source-branch".into(), head.into(),
             "--target-branch".into(), base.into(),
             "--status".into(), "completed".into(),
-            "--query".into(), "[0].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId]".into(),
+            "--query".into(), "[0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId]".into(),
             "-o".into(), "tsv".into(),
         ]);
         let row = self.run_az(&args)?;

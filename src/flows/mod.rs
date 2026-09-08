@@ -596,14 +596,20 @@ pub(crate) fn run_version_script(git: &dyn Git, script: &dyn VersionScript, vers
 ///   Derived, never stored. The ancestry check reads `origin/{branch}` when
 ///   the remote branch exists (the local name may be a remote-only branch that
 ///   resolves to nothing on a fresh clone), falling back to the local name.
+///
+/// Newest version first, so a caller that takes the first entry lands on the
+/// line most likely to still be alive; names that carry no version come last,
+/// by name. Name order alone is meaningless here: it ranks `1.0.0` above
+/// `1.3.0` but `4.10.0` above `4.3.0`.
 pub(crate) fn open_versioned_branches(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, main_branch: &str, prefix: &str) -> Result<Vec<String>, String> {
+    let version_of = |branch: &str| branch.strip_prefix(&format!("{prefix}/")).and_then(SemVer::parse);
     let branches = git.list_branches_matching(&format!("{prefix}/*"))?;
     let mut open = Vec::with_capacity(branches.len());
     for branch in branches {
         let tag_is_shipped_record = cfg.bump_strategy == BumpStrategy::Rc || prefix == "hotfix";
         let shipped = if tag_is_shipped_record {
-            match branch.strip_prefix(&format!("{prefix}/")).and_then(SemVer::parse) {
-                Some(version) => git.tag_exists(&version.to_release().tag_name())?,
+            match version_of(&branch) {
+                Some(version) => version_tagged(git, &version.to_release())?,
                 None => false,
             }
         } else {
@@ -620,7 +626,23 @@ pub(crate) fn open_versioned_branches(git: &dyn Git, hosting: &dyn HostingPlatfo
             open.push(branch);
         }
     }
+    open.sort_by_cached_key(|branch| {
+        let version = version_of(branch);
+        (version.is_none(), std::cmp::Reverse(version), branch.clone())
+    });
     Ok(open)
+}
+
+/// A tag naming `version` in any spelling `SemVer::parse` accepts. gflow tags
+/// `vX.Y.Z`; a repo tagged by a pipeline may carry only `X.Y.Z`, and
+/// `find_latest_tag` already trusts those — so must the shipped record.
+fn version_tagged(git: &dyn Git, version: &SemVer) -> Result<bool, String> {
+    for tag in version.tag_names() {
+        if git.tag_exists(&tag)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Guidance appended to a merge conflict during a release/hotfix finish.

@@ -60,7 +60,7 @@ git config gflow.branch.main master   # or: main
 ```
 
 The key is repo-local on purpose: the mainline is a property of the repository,
-not of the developer (the opposite of `gflow.worktree.*`, which is a personal
+not of the developer (the opposite of the worktree settings, which are personal
 preference and therefore global by default). Only `main` and `master` are
 supported; any other value is rejected with a message naming the fix.
 
@@ -231,7 +231,7 @@ gflow start hotfix-fix --name <name> [--no-checkout] [--no-worktree]     # must 
 
 `--no-checkout` creates and pushes the branch without switching to it. You stay on your current branch. Designed for [git worktree](https://git-scm.com/docs/git-worktree) workflows. Not available for `start release`.
 
-`--no-worktree` skips the optional [worktree flow](#worktree-integration) for a single command when `gflow.worktree.enabled` is set. No effect otherwise.
+`--no-worktree` skips the optional [worktree flow](#worktree-integration) for a single command when `worktree=true` is set. No effect otherwise.
 
 ### Finish
 
@@ -353,19 +353,29 @@ Or set options directly (handy for scripts and dotfiles):
 gflow worktree enable                 # turn the flow on
 gflow worktree editor cursor          # code (default) | cursor | windsurf | zed | pycharm | none | any command
 gflow worktree path ~/worktrees       # where worktree folders go (default: the repo's parent)
-gflow worktree status                 # show the current settings
+gflow worktree status                 # show the current settings (all layers merged)
 gflow worktree disable                # turn it off
+
+gflow worktree enable --repo          # ... in this repository's committed config
+gflow worktree enable --local         # ... in this repository, for you only (not committed)
 ```
 
-These write to your **global** git config by default (per-developer); add `--local` to scope a
-setting to the current repository. They're a front-end over the `gflow.worktree.*` git config
-keys, which you can also set by hand (`git config --global gflow.worktree.enabled true`):
+These write to `~/.gflow/config` by default (per-developer, all repositories). Two flags aim
+them elsewhere: `--repo` writes the repository's committed `<repo>/.gflow/config`, and `--local`
+writes `<repo>/.gflow/config.local`, which is yours alone and never committed. All three are
+plain `key=value` files you can also edit by hand — see
+[Configuration layers](#configuration-layers):
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `gflow.worktree.enabled` | `false` | Turn the worktree flow on |
-| `gflow.worktree.editor` | `code` | Command to open the worktree (`<editor> <path>`). Use `none` to skip opening |
-| `gflow.worktree.path` | _(unset)_ | Directory to place worktree folders in (`~` is expanded). Defaults to the repo's parent directory |
+| `worktree` | `false` | Turn the worktree flow on |
+| `editor` | `code` | Command to open the worktree (`<editor> <path>`). Use `none` to skip opening |
+| `path` | _(unset)_ | Directory to place worktree folders in (`~` is expanded). Defaults to the repo's parent directory |
+
+> Upgrading from 4.0.x: the old `gflow.worktree.*` git config keys move into these files
+> automatically on the first run — global keys to `~/.gflow/config`, `--local` keys to that
+> repository's `.gflow/config.local`. Local git config was never committed, so it stays
+> uncommitted. Nothing to do by hand, and nothing appears in `git status`.
 
 One other key lives outside this family and is **repo-local**, because the
 mainline is a property of the repository rather than a per-developer preference:
@@ -429,7 +439,7 @@ carries on: a typo in `worktrees.json` never blocks gflow.
 }
 ```
 
-As with `--no-checkout`, an active worktree flow relaxes the branch-type check for `release-fix` and `hotfix-fix` — the target release/hotfix branch is discovered automatically, so you can run them from any branch.
+As with `--no-checkout`, an active worktree flow relaxes the branch-type check for `release-fix` and `hotfix-fix` — the target release/hotfix branch is discovered automatically, so you can run them from any branch. Discovery is a fallback, not an override: standing on a `release/{v}` or `hotfix/{v}` branch means `release-fix`/`hotfix-fix` targets *that* branch, even inside a worktree. When gflow does have to discover, it takes the newest open version, never the first name in sort order.
 
 ### Naming & layout
 
@@ -570,6 +580,32 @@ gflow already prevents the related "two open hotfixes" or "two open releases" ca
 
 Two related, opt-in features for teams whose `main`/`develop` reject direct pushes, or who keep the version number inside their own repo files (`Cargo.toml`, `package.json`, ...). The config file itself is required — see [Initialising a repository](#initialising-a-repository); with the defaults it selects, a repo behaves exactly as before.
 
+### Configuration layers
+
+gflow reads three files and merges them. Later layers override earlier ones, key by key —
+a layer that stays silent about a key never undoes a lower one:
+
+| Layer | File | Written by | Scope | Committed |
+|-------|------|-----------|-------|-----------|
+| 1 | `~/.gflow/config` | `gflow worktree …` | you, in every repository | no |
+| 2 | `<repo>/.gflow/config` | `gflow worktree … --repo` | this repository, everyone who clones it | **yes** |
+| 3 | `<repo>/.gflow/config.local` | `gflow worktree … --local` | you, in this repository | no (gitignored) |
+
+So: your habits go in layer 1, the team's rules in layer 2, and your exceptions to
+either in layer 3.
+
+Layers 1 and 2 take every key. Layer 3 takes only the personal ones — `worktree`, `editor`,
+`path`. `mode`, `keep-release-branches`, and `bump-strategy` are team decisions: a private
+opt-out of `mode=protected` in a file nobody reviews would defeat the guarantee the committed
+file exists to make. A team key found there is reported and ignored.
+
+Layer 1 also makes `gflow init` optional for a throwaway repository: if `~/.gflow/config`
+states a policy, a repo with no committed file of its own uses it rather than refusing.
+
+gflow writes and maintains `<repo>/.gflow/.gitignore` itself, so layer 3 is never committed.
+That file ignores itself too, so gflow's bookkeeping never shows up as untracked noise. Your
+repository's own `.gitignore` is never touched.
+
 ### `.gflow/config`
 
 A committed file, one `key=value` pair per line, `#` comments allowed, unknown keys ignored:
@@ -585,7 +621,12 @@ keep-release-branches=true
 | `keep-release-branches` | `true` \| `false` | `false` | When `true`, `finish` and `bump` stop deleting the `release/*`/`hotfix/*` branch when they're done with it. Work branches (`feature/*`, `fix/*`, ...) are never affected. |
 | `bump-strategy` | `rc` \| `patch` | `rc` | How `bump` versions staged builds. `rc` is today's behavior: pre-release tags (`v2.6.0-rc.1`, `-rc.2`, …) with one clean tag at finish. `patch` increments the real patch version at every bump (`v2.6.0` → `v2.6.1` → …) — see [Bump strategy](#bump-strategy-rc-vs-patch). |
 
-Any other value is a hard error naming the file, the key, and the accepted values. This is a **committed file, not git config**: these are team decisions, and a fresh clone must see the same policy everyone else does — git config is per-clone and would silently drift. (Same reasoning as the version script below.) Developer/machine preferences — the worktree flow, `gflow.branch.main` — stay in git config; only repo-wide landing policy moved here.
+It also accepts `worktree`, `editor`, and `path` — the same keys `gflow worktree --repo` writes.
+This file is committed, so a setting made here applies to everyone who clones the repository.
+Keep machine-specific values (your editor, your worktree directory) in `~/.gflow/config`, or
+in `<repo>/.gflow/config.local` when they apply to one repository only.
+
+Any other value is a hard error naming the file, the key, and the accepted values. This is a **committed file, not git config**: these are team decisions, and a fresh clone must see the same policy everyone else does — git config is per-clone and would silently drift. (Same reasoning as the version script below.) What stays in git config is only what gflow detects and caches for itself: `gflow.branch.main` and `gflow.hosting.provider`.
 
 ### Bump strategy: `rc` vs `patch`
 
@@ -598,6 +639,8 @@ Some projects can't consume pre-release tags — every staged build needs a real
 | `gflow finish` | cuts the clean production tag `v2.6.0` | **merges only** — the last bump tag (e.g. `v2.6.2`) is already the final version (finish re-pushes it if origin is missing it) |
 
 Everything else is identical: the staging guard still refuses `finish` when HEAD has commits past the latest tag (`gflow bump` is the remedy), protected mode still routes version-script commits through a PR and tags the PR's merge commit, and hotfixes work the same way. One patch-specific subtlety is handled for you: an open release branch's staging tags (`v2.6.0`, `v2.6.1`, …) are *not* production history, so a hotfix started while that release is in flight derives its version from the last shipped tag (e.g. `v2.5.4`), never from the release's in-flight numbers.
+
+gflow writes `vX.Y.Z` tags. A tag without the `v` (`X.Y.Z`, e.g. cut by a pipeline) is read as the same version — for the latest-version lookup and for deciding that a release or hotfix has shipped.
 
 One consequence to plan for: under `patch` every tag is a clean `vX.Y.Z` — there is no tag-shape distinction between staging and production, so CI must gate production on something other than the tag pattern (a branch, the merge to `main`, or a manual promotion step).
 
@@ -901,7 +944,9 @@ src/
 │   ├── finish_release.rs — Bump, sync, finish release (idempotent)
 │   └── finish_hotfix.rs — Finish hotfix with auto-tag, propagate to open releases (idempotent)
 ├── state.rs             — Persisted finish state for conflict recovery
-├── repo_config.rs       — Parses .gflow/config (mode, keep-release-branches, bump-strategy)
+├── repo_config.rs       — The config layer stack (~/.gflow/config, <repo>/.gflow/config,
+│                         <repo>/.gflow/config.local), its key=value format, and the
+│                         4.0.x git-config migration
 ├── version_script.rs    — Discovery + execution port for .gflow/set-version.{sh,cmd}
 ├── version.rs           — SemVer parsing and bumping
 ├── menu.rs              — Interactive menus via crossterm; implements Prompter

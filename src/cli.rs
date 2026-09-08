@@ -47,7 +47,10 @@ pub enum Commands {
     Worktree {
         #[command(subcommand)]
         action: Option<WorktreeAction>,
-        /// Write to this repository's config instead of your global (user) config
+        /// Write to this repository's committed .gflow/config (shared with everyone who clones it)
+        #[arg(long, global = true, conflicts_with = "local")]
+        repo: bool,
+        /// Write to this repository's .gflow/config.local (yours only, never committed)
         #[arg(long, global = true)]
         local: bool,
     },

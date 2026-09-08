@@ -109,6 +109,12 @@ fn tag_name() {
 }
 
 #[test]
+fn tag_names_lists_every_spelling_parse_accepts() {
+    assert_eq!(SemVer::new(1, 2, 0).tag_names(), ["v1.2.0", "1.2.0"]);
+    assert_eq!(SemVer::new(1, 2, 0).with_rc(1).tag_names(), ["v1.2.0-rc.1", "1.2.0-rc.1"]);
+}
+
+#[test]
 fn semver_display() {
     assert_eq!(SemVer::new(2, 6, 0).to_string(), "2.6.0");
     assert_eq!(SemVer::new(2, 6, 0).with_rc(1).to_string(), "2.6.0-rc.1");

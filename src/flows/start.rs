@@ -42,6 +42,29 @@ fn materialize_branch(
     Ok(())
 }
 
+/// `list_branches_matching` strips the `origin/` prefix, so a discovered branch
+/// that exists only on the remote is not an object `git branch <new> <base>`
+/// can resolve. Local wins when both exist: it is what the user would have
+/// branched from by hand.
+///
+/// DRY: `open_versioned_branches` resolves the same short name origin-first,
+/// because "has it shipped" is a question only the remote can answer.
+fn branchable_ref(git: &dyn Git, branch: &str) -> Result<String, String> {
+    if git.local_branch_exists(branch)? {
+        Ok(branch.to_string())
+    } else {
+        Ok(format!("origin/{branch}"))
+    }
+}
+
+/// The container branch HEAD is on, when it carries `prefix`. Standing on a
+/// release or hotfix is an explicit choice, so it beats discovery — which is
+/// only ever a fallback for running the command from somewhere else.
+fn standing_on(git: &dyn Git, prefix: &str) -> Result<Option<String>, String> {
+    let current = git.current_branch()?;
+    Ok(current.starts_with(prefix).then_some(current))
+}
+
 /// A parent with no parseable version can only yield a fix branch that
 /// `BranchType::parse` reads back as `Other` — creatable, never finishable.
 fn version_of(branch: &str, prefix: &str) -> Result<SemVer, String> {
@@ -77,21 +100,21 @@ pub fn start_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &dyn Hosti
 
 pub fn start_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, main_branch: &str, name: &str, no_checkout: bool, worktree: Option<WorktreeContext<'_>>) -> Result<(), String> {
     let effective_no_checkout = effective_no_checkout(no_checkout, &worktree);
-    let release_branch = if effective_no_checkout {
-        open_versioned_branches(git, hosting, cfg, main_branch, "release")?
-            .first()
-            .ok_or("No release branch found. Create one with 'gflow start release' first.")?
-            .clone()
-    } else {
-        let current = git.current_branch()?;
-        if current.strip_prefix("release/").is_none() {
-            return Err("Not on a release branch".to_string());
+    let (release_branch, base) = match standing_on(git, "release/")? {
+        Some(current) => (current.clone(), current),
+        None if effective_no_checkout => {
+            let discovered = open_versioned_branches(git, hosting, cfg, main_branch, "release")?
+                .first()
+                .ok_or("No release branch found. Create one with 'gflow start release' first.")?
+                .clone();
+            let base = branchable_ref(git, &discovered)?;
+            (discovered, base)
         }
-        current
+        None => return Err("Not on a release branch".to_string()),
     };
 
     let branch = version_of(&release_branch, "release/")?.release_fix_branch(name);
-    materialize_branch(git, &branch, &release_branch, effective_no_checkout, worktree)
+    materialize_branch(git, &branch, &base, effective_no_checkout, worktree)
 }
 
 /// In worktree mode the hotfix container gets its own worktree too (opened
@@ -100,12 +123,15 @@ pub fn start_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &Rep
 /// would hand it one — and `gflow finish` needs it checked out somewhere.
 pub fn start_hotfix_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, name: &str, no_checkout: bool, worktree: Option<WorktreeContext<'_>>, main_branch: &str, script: Option<&dyn VersionScript>) -> Result<(), String> {
     let effective_no_checkout = effective_no_checkout(no_checkout, &worktree);
-    let hotfix_branch = resolve_or_create_hotfix(git, hosting, cfg, effective_no_checkout, main_branch, script)?;
+    let (hotfix_branch, base) = match standing_on(git, "hotfix/")? {
+        Some(current) => (current.clone(), current),
+        None => resolve_or_create_hotfix(git, hosting, cfg, effective_no_checkout, main_branch, script)?,
+    };
     let branch = version_of(&hotfix_branch, "hotfix/")?.hotfix_fix_branch(name);
     if let Some(ctx) = &worktree {
         open_container_worktree(git, ctx, "Hotfix", &hotfix_branch)?;
     }
-    materialize_branch(git, &branch, &hotfix_branch, effective_no_checkout, worktree)
+    materialize_branch(git, &branch, &base, effective_no_checkout, worktree)
 }
 
 /// A release/hotfix container branch handed to worktree mode: open it in its
@@ -329,15 +355,21 @@ fn prompt_release_type(prompter: &dyn Prompter, latest: &SemVer, has_breaking: b
     }
 }
 
-fn resolve_or_create_hotfix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, no_checkout: bool, main_branch: &str, script: Option<&dyn VersionScript>) -> Result<String, String> {
+/// Returns the hotfix branch and the ref to cut the fix from. They differ only
+/// for a reused branch that was never checked out here: a checkout creates the
+/// local branch from origin on its own, `git branch` does not.
+fn resolve_or_create_hotfix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, no_checkout: bool, main_branch: &str, script: Option<&dyn VersionScript>) -> Result<(String, String), String> {
     let hotfix_branches = open_versioned_branches(git, hosting, cfg, main_branch, "hotfix")?;
 
     if let Some(branch) = hotfix_branches.first() {
         println!("Using existing hotfix branch: {branch}");
-        if !no_checkout {
+        let base = if no_checkout {
+            branchable_ref(git, branch)?
+        } else {
             git.checkout(branch)?;
-        }
-        return Ok(branch.to_string());
+            branch.clone()
+        };
+        return Ok((branch.clone(), base));
     }
 
     let latest = match cfg.bump_strategy {
@@ -371,7 +403,7 @@ fn resolve_or_create_hotfix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
     }
     git.push(&branch)?;
 
-    Ok(branch)
+    Ok((branch.clone(), branch))
 }
 
 /// Patch-strategy sibling of `find_latest_tag` for hotfix versioning: every

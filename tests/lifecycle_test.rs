@@ -492,6 +492,7 @@ fn worktree_lifecycle_git() -> MockGit {
     let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
     git.current_branch = "develop".to_string();
     git.branches_matching = vec!["release/2.5.0".to_string()];
+    git.existing_local_branches.insert("release/2.5.0".to_string());
     git
 }
 

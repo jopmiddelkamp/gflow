@@ -2,7 +2,7 @@ use std::process::{Command, ExitCode};
 
 use clap::Parser;
 
-use gflow::cli::{Commands, WorktreeAction};
+use gflow::cli::Commands;
 use gflow::git::{GitCli, SystemRunner};
 use gflow::git::Git;
 use gflow::hosting::detect::{self, Provider};
@@ -14,6 +14,7 @@ use gflow::menu::MenuPrompter;
 use gflow::editor::CommandEditor;
 use gflow::init;
 use gflow::version_script::{self, ScriptCli, VersionScript};
+use gflow::repo_config;
 use gflow::worktree::{self, WorktreeConfig, WorktreeEnv};
 use gflow::worktree_setup::{self, ShellSetup};
 
@@ -40,11 +41,25 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     check_command_exists("git")?;
     let git = GitCli::new(&SystemRunner);
 
-    // `gflow worktree` only reads/writes git config — no gh, auth, fetch, or branch
-    // context needed. Dispatch it here and return before the branch-flow machinery.
+    // Pre-4.1 settings lived in `gflow.worktree.*` git config. Move them into
+    // the config files before anything reads config, in the scope they were set
+    // in. Idempotent: the git keys are unset once accounted for.
+    let home = repo_config::home_dir();
+    let migration_root = git.worktree_root().ok();
+    repo_config::migrate_git_config(&git, home.as_deref(), migration_root.as_deref())?;
+
+    // `gflow worktree` only reads/writes config files — no gh, auth, fetch, or
+    // branch context needed. Dispatch it here and return before the branch-flow
+    // machinery.
     let command = match command {
-        Some(Commands::Worktree { action, local }) => {
-            return run_worktree_config(&git, action, local);
+        Some(Commands::Worktree { action, repo, local }) => {
+            return worktree::run_config(
+                &MenuPrompter,
+                migration_root.as_deref(),
+                home.as_deref(),
+                action,
+                worktree::ConfigScope::from_flags(repo, local),
+            );
         }
         other => other,
     };
@@ -59,12 +74,16 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     if let Some(Commands::Init) = command {
         return init::run(&MenuPrompter, &root);
     }
-    let repo_cfg = init::ensure(&MenuPrompter, &root, command.is_none())?;
+    let layers = init::ensure(&MenuPrompter, home.as_deref(), &root, command.is_none())?;
+    for warning in &layers.warnings {
+        eprintln!("Warning: {warning}");
+    }
+    let wt_config = WorktreeConfig::from_settings(&layers.settings);
+    let repo_cfg = layers.settings.resolve();
     let script_path = version_script::resolve(&root)?;
     let script = script_path.map(|path| ScriptCli::new(path, root.clone()));
 
     let hosting = create_hosting(&git)?;
-    let wt_config = WorktreeConfig::load(&git)?;
     let editor = CommandEditor::new(wt_config.editor.clone());
     let (setup_commands, setup_warning) = worktree_setup::resolve(&root, wt_config.enabled);
     if let Some(warning) = setup_warning {
@@ -109,17 +128,6 @@ fn create_hosting(git: &dyn Git) -> Result<Box<dyn HostingPlatform>, String> {
             })?;
             Ok(Box::new(hosting))
         }
-    }
-}
-
-fn run_worktree_config(git: &GitCli<'_>, action: Option<WorktreeAction>, local: bool) -> Result<(), String> {
-    match action {
-        None => worktree::wizard(git, &MenuPrompter, local),
-        Some(WorktreeAction::Enable) => worktree::set_enabled(git, true, local),
-        Some(WorktreeAction::Disable) => worktree::set_enabled(git, false, local),
-        Some(WorktreeAction::Editor { value }) => worktree::set_editor(git, &value, local),
-        Some(WorktreeAction::Path { value }) => worktree::set_path(git, &value, local),
-        Some(WorktreeAction::Status) => worktree::show_status(git),
     }
 }
 

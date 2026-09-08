@@ -54,6 +54,10 @@ pub trait Git {
     // Worktree / config primitives
     /// Read a git config value (`git config --get <key>`). Returns `None` when unset.
     fn get_config(&self, key: &str) -> Result<Option<String>>;
+    /// Read `key` from one scope only. `get_config` returns the *effective*
+    /// value, which cannot tell a local override from a global default — the
+    /// config migration has to know which file a value belongs in.
+    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>>;
     /// Write a git config value. `global` selects `--global` (user) vs local (repo) scope.
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<()>;
     /// Remove a git config value. A key that is already unset is treated as success.
@@ -344,6 +348,10 @@ impl Git for GitCli<'_> {
 
     fn get_config(&self, key: &str) -> Result<Option<String>> {
         self.run_config(&["config", "--get", key])
+    }
+    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>> {
+        let scope = if global { "--global" } else { "--local" };
+        self.run_config(&["config", scope, "--get", key])
     }
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<()> {
         let mut args = vec!["config"];
