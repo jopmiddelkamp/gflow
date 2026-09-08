@@ -396,6 +396,30 @@ fn run_config_status_reads_the_layers_and_writes_nothing() {
 }
 
 #[test]
+fn run_config_status_reports_a_layer_warning_without_failing() {
+    let home = common::tmp_dir("gflow-run-home");
+    let repo = common::tmp_dir("gflow-run-repo");
+    fs::create_dir_all(repo.join(".gflow")).unwrap();
+    fs::write(repo.join(".gflow").join("config"), "mode=protected\n").unwrap();
+    fs::write(repo.join(".gflow").join("config.local"), "mode=free\n").unwrap();
+
+    let result = gflow::worktree::run_config(
+        &MockPrompter::aborting(),
+        Some(&repo),
+        Some(&home),
+        Some(WorktreeAction::Status),
+        ConfigScope::Global,
+    );
+
+    assert!(result.is_ok(), "a reported-and-ignored key must not fail status");
+    assert_eq!(
+        fs::read_to_string(repo.join(".gflow").join("config.local")).unwrap(),
+        "mode=free\n",
+        "status is read-only even when a layer's key is ignored"
+    );
+}
+
+#[test]
 fn run_config_path_and_disable_reach_their_setters() {
     let home = common::tmp_dir("gflow-run-home");
     let p = &MockPrompter::aborting();

@@ -635,7 +635,12 @@ mod tests {
     fn home_dir_reads_the_environment() {
         // The one caller that cannot be injected: the composition root has to
         // find the home directory before any config exists to point at it.
-        assert_eq!(home_dir(), std::env::var_os("HOME").map(std::path::PathBuf::from));
+        // HOME wins where both are set (Unix CI); USERPROFILE is the fallback
+        // a bare HOME-less machine (Windows CI) actually has.
+        let expected = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from);
+        assert_eq!(home_dir(), expected);
     }
 
     #[test]
