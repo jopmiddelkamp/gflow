@@ -241,7 +241,10 @@ fn ado_merged_pr_queries_the_newest_pr_of_any_status() {
     assert_eq!(pr.merge_commit_sha, "deadbeef");
     let call = &runner.calls()[0];
     assert!(call.contains("--status all"), "got: {call}");
-    assert!(call.contains("[0].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, targetRefName, pullRequestId]"),
+    // The `[0:1]` slice, not `[0]`: a multiselect on a plain index is a flat list
+    // of scalars, which az's tsv writer prints one value per line. Only a list of
+    // lists becomes a single tab-separated row, which is what the parser reads.
+    assert!(call.contains("[0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, targetRefName, pullRequestId]"),
         "the tsv row parser depends on this exact projection and order; got: {call}");
 }
 
@@ -260,7 +263,7 @@ fn ado_merged_pr_to_filters_by_source_and_target_branch() {
         runner.calls()[0],
         "az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
 --source-branch feature/x --target-branch develop --status completed \
---query [0].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"
+--query [0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"
     );
 }
 
