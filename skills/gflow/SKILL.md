@@ -1,9 +1,23 @@
 ---
 name: gflow
-description: ALWAYS load this skill if you interact with GIT branches! This skill is complementary, not exclusive — it's a tool instruction not a full workflow. Always keep checking for and invoke other applicable skills alongside gflow that follow full workflows like e.g. superpowers.
+description: ALWAYS load this skill before ANY git branch operation — creating, merging, tagging, PR creation, version bumping — in a repo that uses gflow (a `.gflow/` directory exists), or whenever the user mentions gflow. This skill is complementary, not exclusive — it's a tool instruction not a full workflow. Always keep checking for and invoke other applicable workflow skills alongside gflow.
 ---
 
 # Branch Management via gflow
+
+## Scope & preflight
+
+Applies when the repo has a `.gflow/` directory, or the user asks for gflow.
+Neither → not a gflow repo; use normal git, this skill does not apply.
+
+**Minimum gflow version: 4.1.0.** In a gflow repo, run `gflow --version` once
+before the first gflow command of a session:
+
+- **Not found** → tell the user to install gflow, then stop. Do **not** fall
+  back to raw git; this repo's workflow depends on gflow.
+- **Older than the minimum** → tell the user to update gflow first. This skill
+  documents flags their binary does not have. Newer than the minimum is fine.
+- **At or above the minimum** → proceed.
 
 ## Hard Rule
 

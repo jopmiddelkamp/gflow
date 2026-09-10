@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "gflow",
+  "displayName": "gflow",
+  "description": "Teaches Claude how to use the gflow CLI for git branch workflows: start/finish, releases, worktrees, PR automation.",
+  "author": { "name": "Jop Middelkamp", "url": "https://github.com/jopmiddelkamp" },
+  "homepage": "https://github.com/jopmiddelkamp/gflow",
+  "repository": "https://github.com/jopmiddelkamp/gflow",
+  "license": "Apache-2.0",
+  "keywords": ["git", "gitflow", "branching", "workflow", "cli"],
+  "skills": "./skills/"
+}
