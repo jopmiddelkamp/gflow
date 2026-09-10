@@ -175,12 +175,25 @@ them. A principle you did not run is a principle you did not apply.
 ## Documentation Sync
 
 When a change alters user-facing behavior — a command, flag, menu entry, config
-key, or error a user reads — update `README.md` and `.claude/skills/gflow/skill.md`
+key, or error a user reads — update `README.md` and `skills/gflow/SKILL.md`
 in the same change. Internal refactors, test-only work and version bumps do not
 need a docs edit (same "does NOT apply" list as Architectural Decisions above).
 
 When updating skills, keep content concise — every token matters. Be clear but
 not verbose.
+
+## The gflow skill lives in the plugin, not `.claude/skills/`
+
+`skills/gflow/SKILL.md` ships as part of this repo's own Claude Code plugin
+(`.claude-plugin/`). It is not auto-loaded just by working in this repo — it
+has to be installed. Two sources, same marketplace name:
+
+- Users install the published copy: `/plugin marketplace add jopmiddelkamp/gflow`
+- Contributors install this working copy, so local edits to `SKILL.md` take
+  effect: `/plugin marketplace add ./` (run from the repo root)
+
+Then `/plugin install gflow@gflow` either way. After editing `SKILL.md`, run
+`/plugin marketplace update gflow` to pick the change up.
 
 ## Release
 

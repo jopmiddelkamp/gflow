@@ -19,6 +19,18 @@ jobs:
       - run: cargo test --all
       - run: cargo build --release
 
+  # Deliberately outside the release `needs:` chain below: a broken plugin
+  # manifest must fail CI, but it must not block shipping the binary.
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g @anthropic-ai/claude-code
+      # Not --strict: the plugin deliberately declares no `version`, so updates
+      # resolve by commit and users never sit on a stale cached copy. --strict
+      # would treat that missing field as an error.
+      - run: claude plugin validate .
+
   # Actions tag filters cannot express "v* but not v*-rc.N", so the exclusion is
   # an `if:` here. It is stated ONCE: every job below reaches the release path
   # through a strict `needs:` chain, and a job whose dependency was skipped is

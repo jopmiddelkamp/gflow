@@ -57,9 +57,15 @@ If a release branch already exists, gflow checks it out. Verify whether version 
    - Write human-readable descriptions (not raw commit messages)
    - Add a comparison link at the bottom: `[X.Y.Z]: https://github.com/jopmiddelkamp/gflow/compare/vPREVIOUS...vX.Y.Z`
 4. **Run tests** — `cargo test --all` must pass (use `~/.cargo/bin/cargo` if `cargo` is not in PATH)
+**Conditional — the skill's minimum CLI version.** `skills/gflow/SKILL.md` carries
+a `**Minimum gflow version:**` line. It is the *oldest* CLI the skill still works
+against, not the current one. Raise it to `X.Y.Z` **only if this release added or
+changed CLI syntax that the skill documents**. If the skill documents nothing new,
+leave it — raising it needlessly nags users whose older binary works fine.
+
 5. **Commit** all version files:
    ```bash
-   git add Cargo.toml Cargo.lock packaging/chocolatey/gflow.nuspec CHANGELOG.md
+   git add Cargo.toml Cargo.lock packaging/chocolatey/gflow.nuspec CHANGELOG.md skills/gflow/SKILL.md
    git commit -m "chore: bump version to X.Y.Z"
    ```
 

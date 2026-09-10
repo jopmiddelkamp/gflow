@@ -208,6 +208,21 @@ Selecting finish creates a PR back to the base branch. You can also start a new 
 > finish hotfix fix
 ```
 
+## Claude Code Plugin
+
+gflow ships a [Claude Code](https://claude.com/claude-code) skill that teaches
+Claude how to drive this CLI (branch start/finish, releases, worktrees, PR
+automation). Install it with:
+
+```
+/plugin marketplace add jopmiddelkamp/gflow
+/plugin install gflow@gflow
+```
+
+The skill documents the current CLI surface, so keep the `gflow` binary up to
+date. It checks `gflow --version` on first use and tells you if your binary is
+older than the syntax it documents.
+
 ## Non-Interactive CLI (for AI tools & scripts)
 
 All commands can be invoked directly via subcommands, bypassing the interactive menu:

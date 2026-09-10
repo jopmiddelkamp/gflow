@@ -1,0 +1,13 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "gflow",
+  "description": "Claude Code plugin for the gflow gitflow CLI.",
+  "owner": { "name": "Jop Middelkamp", "url": "https://github.com/jopmiddelkamp" },
+  "plugins": [
+    {
+      "name": "gflow",
+      "source": "./",
+      "description": "Customized gitflow workflow CLI: branch start/finish, releases, PR automation for GitHub and Azure DevOps."
+    }
+  ]
+}
