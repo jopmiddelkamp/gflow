@@ -181,6 +181,11 @@ jobs:
           $installScript = $installScript -replace '__CHECKSUM__', $checksum
           Set-Content "packaging\chocolatey\tools\chocolateyinstall.ps1" -Value $installScript
 
+          # Pin the icon URL to this release tag (Chocolatey moderation requirement)
+          $nuspec = Get-Content "packaging\chocolatey\gflow.nuspec" -Raw
+          $nuspec = $nuspec -replace '__TAG__', "${{ github.ref_name }}"
+          Set-Content "packaging\chocolatey\gflow.nuspec" -Value $nuspec
+
           # Pack from the chocolatey directory so tools/ is included
           Push-Location "packaging\chocolatey"
           choco pack "gflow.nuspec" --version $version
