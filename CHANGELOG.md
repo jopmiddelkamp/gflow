@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-09-10
+
+### Changed
+- New brand art. The purple palette is replaced by orange: amber `#ff9424` running into deep orange `#ef5a17`, with navy ink `#1b2a4a`. The wordmark is now `GFLOW` without the hyphen, set from Titillium Web Bold with every letter carrying the same stem weight as the original hand-adjusted lettering. The Chocolatey package icon uses the new art.
+- Art exports are regenerated at 512, 1024 and 1536 px with transparent PNG backgrounds, the logo is centered on every artboard, and `art/README.md` documents the colors and the wordmark recipe.
+- No CLI behaviour changed in this release. The binaries are functionally identical to 4.2.0 — the release exists to publish the new brand art.
+
 ## [4.2.0] - 2026-09-10
 
 ### Added
@@ -238,6 +245,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.3.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.1.0...v4.2.0
 [4.1.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.5.0...v4.0.0
