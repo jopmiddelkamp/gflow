@@ -113,3 +113,19 @@ as a finding instead of a hypothesis.
 code path end to end and, when the claim is about git behavior, run the
 command against a scratch repo. Report what was verified and what was not, in
 separate sentences. "Probably the same" is a hypothesis; say so.
+
+## Measure the artwork, do not trust its README (2026-09-10)
+
+**What happened.** `art/README.md` said the wordmark was "Titillium Web Bold".
+I rebuilt `GFLOW` from that font and the user saw at once that it looked
+semi-bold. The old G was pure Bold, but the F, L and O had been thickened by
+hand by about 2.8 units, so the word as a whole was heavier than the font.
+
+**Why.** I treated a prose description of an asset as its spec. The SVG paths
+were right there; three stem measurements would have shown the mismatch
+before the first render.
+
+**Rule.** When rebuilding a visual asset, measure the existing artwork first
+(stem widths, cap height, ring thickness, gaps) and compare those numbers
+with the source you are about to use. Rebuild only after the numbers agree,
+or state the difference up front and let the user choose.
