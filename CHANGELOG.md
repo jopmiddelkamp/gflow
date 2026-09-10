@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-09-10
+
+### Added
+- gflow now ships as a Claude Code plugin, so Claude can drive gflow's branch, release and PR commands for you. Install it with `/plugin marketplace add jopmiddelkamp/gflow`, then `/plugin install gflow@gflow`. The bundled skill checks `gflow --version` on first use and tells you to update if your binary is older than the syntax it documents.
+
+### Changed
+- No CLI behaviour changed in this release. The binaries are functionally identical to 4.1.0 — the release exists to publish the Claude Code plugin.
+
 ## [4.1.0] - 2026-09-08
 
 ### Added
@@ -230,6 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.2.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.1.0...v4.2.0
+[4.1.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.5.0...v4.0.0
 [3.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v3.3.0...v3.4.0
