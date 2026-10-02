@@ -232,7 +232,7 @@ mod tests {
 
         // File lives in the gflow-finish/ folder, keyed by the source branch.
         let expected = dir.join(STATE_DIR_NAME).join("hotfix-2.5.2.state");
-        assert!(expected.exists(), "state should be saved at {}", expected.display());
+        assert!(expected.exists());
 
         let loaded = FinishState::load(&dir, FinishKind::Hotfix, 2, 5, 2).unwrap().unwrap();
         assert_eq!(loaded, s);
@@ -363,6 +363,54 @@ worktree_path=/somewhere/new
         // A corrupt legacy file must not brick startup; it is dropped.
         FinishState::migrate_legacy(&dir).unwrap();
         assert!(!legacy.exists(), "corrupt legacy file should be removed");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn incomplete_state_cannot_resume_with_an_invented_identity() {
+        let fields = [
+            "version=1", "kind=release", "major=2", "minor=5", "patch=0", "started_at=1234",
+        ];
+        for missing in 0..fields.len() {
+            let contents = fields.iter().enumerate()
+                .filter(|(index, _)| *index != missing)
+                .map(|(_, field)| *field).collect::<Vec<_>>().join("\n");
+
+            let err = FinishState::parse(&contents).unwrap_err();
+
+            let key = fields[missing].split_once('=').unwrap().0;
+            assert!(err.contains(key), "missing {key}, got: {err}");
+        }
+    }
+
+    #[test]
+    fn legacy_read_errors_preserve_the_original_entry() {
+        let dir = tmp_dir();
+        let legacy = dir.join(LEGACY_STATE_FILE_NAME);
+        fs::create_dir(&legacy).unwrap();
+
+        let error = FinishState::migrate_legacy(&dir).unwrap_err();
+
+        assert!(error.contains("Failed to read"));
+        assert!(error.contains(&legacy.display().to_string()));
+        assert!(legacy.is_dir());
+        assert!(!FinishState::dir(&dir).exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_save_errors_leave_the_old_state_available_for_retry() {
+        let dir = tmp_dir();
+        let legacy = dir.join(LEGACY_STATE_FILE_NAME);
+        let contents = "version=1\nkind=release\nmajor=2\nminor=5\npatch=0\nstarted_at=1234\n";
+        fs::write(&legacy, contents).unwrap();
+        fs::write(FinishState::dir(&dir), "blocked").unwrap();
+
+        let error = FinishState::migrate_legacy(&dir).unwrap_err();
+
+        assert!(error.contains("Failed to create"));
+        assert_eq!(fs::read_to_string(&legacy).unwrap(), contents);
+        assert_eq!(fs::read_to_string(FinishState::dir(&dir)).unwrap(), "blocked");
         fs::remove_dir_all(&dir).ok();
     }
 }

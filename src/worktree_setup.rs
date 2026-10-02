@@ -17,7 +17,7 @@ pub struct SetupCommands {
 /// `setup-worktree` key holds one (other keys are skipped whatever they hold).
 /// A hand-rolled subset on purpose — two fixed shapes do not justify a JSON crate.
 pub fn parse(json: &str) -> Result<Vec<String>, String> {
-    let mut c = Cursor { bytes: json.as_bytes(), pos: 0 };
+    let mut c = Cursor { json, pos: 0 };
     c.skip_ws();
     let commands = match c.peek() {
         Some(b'[') => c.string_array("setup commands")?,
@@ -25,7 +25,7 @@ pub fn parse(json: &str) -> Result<Vec<String>, String> {
         _ => return Err(c.error("expected a JSON array or object")),
     };
     c.skip_ws();
-    if c.pos != c.bytes.len() {
+    if c.pos != c.json.len() {
         return Err(c.error("unexpected trailing content"));
     }
     Ok(commands)
@@ -99,7 +99,7 @@ impl WorktreeSetup for ShellSetup {
 }
 
 struct Cursor<'a> {
-    bytes: &'a [u8],
+    json: &'a str,
     pos: usize,
 }
 
@@ -109,7 +109,7 @@ impl Cursor<'_> {
     }
 
     fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.pos).copied()
+        self.json.as_bytes().get(self.pos).copied()
     }
 
     fn skip_ws(&mut self) {
@@ -265,7 +265,7 @@ impl Cursor<'_> {
     }
 
     fn literal(&mut self, word: &str) -> Result<(), String> {
-        if self.bytes[self.pos..].starts_with(word.as_bytes()) {
+        if self.json.as_bytes()[self.pos..].starts_with(word.as_bytes()) {
             self.pos += word.len();
             Ok(())
         } else {
@@ -298,7 +298,7 @@ impl Cursor<'_> {
                         b'b' => out.push('\u{8}'),
                         b'f' => out.push('\u{c}'),
                         b'u' => {
-                            let hex = self.bytes.get(self.pos..self.pos + 4)
+                            let hex = self.json.as_bytes().get(self.pos..self.pos + 4)
                                 .and_then(|h| std::str::from_utf8(h).ok())
                                 .and_then(|h| u32::from_str_radix(h, 16).ok())
                                 .and_then(char::from_u32)
@@ -312,24 +312,12 @@ impl Cursor<'_> {
                 _ if b < 0x20 => return Err(self.error("control character in string")),
                 _ => {
                     let start = self.pos - 1;
-                    let len = utf8_len(b);
-                    let chunk = self.bytes.get(start..start + len)
-                        .and_then(|c| std::str::from_utf8(c).ok())
-                        .ok_or_else(|| self.error("invalid UTF-8"))?;
-                    out.push_str(chunk);
-                    self.pos = start + len;
+                    let character = self.json[start..].chars().next().unwrap();
+                    out.push(character);
+                    self.pos = start + character.len_utf8();
                 }
             }
         }
-    }
-}
-
-fn utf8_len(first: u8) -> usize {
-    match first {
-        0x00..=0x7F => 1,
-        0xC0..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        _ => 4,
     }
 }
 
@@ -340,6 +328,14 @@ mod tests {
     #[test]
     fn parse_accepts_a_top_level_array() {
         assert_eq!(parse(r#"["npm install", "echo done"]"#).unwrap(), vec!["npm install", "echo done"]);
+    }
+
+    #[test]
+    fn object_parser_requires_an_opening_brace_before_consuming_input() {
+        let mut cursor = Cursor { json: "[]", pos: 0 };
+
+        assert_eq!(cursor.object_setup_key().unwrap_err(), "expected '{' at byte 0");
+        assert_eq!(cursor.pos, 0);
     }
 
     #[test]
@@ -381,6 +377,10 @@ mod tests {
         assert!(parse(r#"{"k": [1 2]}"#).is_err());
         assert!(parse(r#"{"k": {"a": 1 "b": 2}}"#).is_err());
         assert!(parse(r#"{"k": ?}"#).is_err());
+        assert!(parse(r#"{"k": [?]}"#).unwrap_err().contains("expected a JSON value"));
+        assert!(parse(r#"{"k": {42: 1}}"#).unwrap_err().contains("expected '\"'"));
+        assert!(parse(r#"{"k": {"a" 1}}"#).unwrap_err().contains("expected ':'"));
+        assert!(parse(r#"{"k": {"a": ?}}"#).unwrap_err().contains("expected a JSON value"));
         assert!(parse(r#"["a" "b"]"#).unwrap_err().contains("expected ',' or ']'"));
         assert!(parse(r#"{"k": tru}"#).unwrap_err().contains("expected 'true'"));
         assert!(parse(r#"{"k": {}, "setup-worktree": [], "x": [[], {}, ""]}"#).is_ok());
@@ -468,6 +468,22 @@ mod tests {
         std::fs::write(dir.join(GENERIC_FILE), "{ nope").unwrap();
         let err = load(&dir).unwrap_err();
         assert!(err.contains("worktrees.json"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unreadable_cursor_file_prevents_running_the_generic_fallback() {
+        let dir = crate::test_support::tmp_dir("gflow-setup-unreadable-cursor");
+        std::fs::create_dir_all(dir.join(CURSOR_FILE)).unwrap();
+        std::fs::write(dir.join(GENERIC_FILE), r#"["must not run"]"#).unwrap();
+
+        let (commands, warning) = resolve(&dir, true);
+
+        assert_eq!(commands, None);
+        let warning = warning.unwrap();
+        assert!(warning.contains("Failed to read"));
+        assert!(warning.contains(&dir.join(CURSOR_FILE).display().to_string()));
+        assert!(warning.contains("Setup commands skipped"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -147,10 +147,9 @@ pub fn open_worktree(git: &dyn Git, ctx: &WorktreeContext<'_>, branch: &str) -> 
         .ok_or("could not determine repository name from its path")?;
     let path = worktree_path(&repo_root, repo_name, config.base_path.as_deref(), branch);
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create worktree base directory '{}': {e}", parent.display()))?;
-    }
+    let parent = path.parent().expect("generated worktree path has a folder name");
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create worktree base directory '{}': {e}", parent.display()))?;
 
     println!("Creating worktree: {}", path.display());
     git.add_worktree(&path, branch)?;
@@ -201,27 +200,29 @@ pub fn run_config(
     scope: ConfigScope,
 ) -> Result<()> {
     use crate::cli::WorktreeAction;
-    if let Some(WorktreeAction::Status) = action {
-        let layers = repo_config::load_layers(home, repo_root)?;
-        for warning in &layers.warnings {
-            eprintln!("Warning: {warning}");
+    let target = || {
+        let target = config_target(repo_root, home, scope)?;
+        if scope == ConfigScope::Local {
+            repo_config::ensure_local_gitignored(
+                target.parent().expect("config target always has a parent"),
+            )?;
         }
-        show_status(&WorktreeConfig::from_settings(&layers.settings));
-        return Ok(());
-    }
-    let target = config_target(repo_root, home, scope)?;
-    if scope == ConfigScope::Local {
-        repo_config::ensure_local_gitignored(
-            target.parent().expect("config target always has a parent"),
-        )?;
-    }
+        Ok::<_, String>(target)
+    };
     match action {
-        None => wizard(&target, prompter, scope),
-        Some(WorktreeAction::Enable) => set_enabled(&target, true, scope),
-        Some(WorktreeAction::Disable) => set_enabled(&target, false, scope),
-        Some(WorktreeAction::Editor { value }) => set_editor(&target, &value, scope),
-        Some(WorktreeAction::Path { value }) => set_path(&target, &value, scope),
-        Some(WorktreeAction::Status) => unreachable!("status returns above"),
+        None => wizard(&target()?, prompter, scope),
+        Some(WorktreeAction::Enable) => set_enabled(&target()?, true, scope),
+        Some(WorktreeAction::Disable) => set_enabled(&target()?, false, scope),
+        Some(WorktreeAction::Editor { value }) => set_editor(&target()?, &value, scope),
+        Some(WorktreeAction::Path { value }) => set_path(&target()?, &value, scope),
+        Some(WorktreeAction::Status) => {
+            let layers = repo_config::load_layers(home, repo_root)?;
+            for warning in &layers.warnings {
+                eprintln!("Warning: {warning}");
+            }
+            show_status(&WorktreeConfig::from_settings(&layers.settings));
+            Ok(())
+        }
     }
 }
 

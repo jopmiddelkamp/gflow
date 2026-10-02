@@ -163,8 +163,8 @@ fn detect_parent_branch(git: &dyn Git, prompter: &dyn Prompter, current: &str) -
 
 #[allow(clippy::too_many_arguments)]
 pub fn finish_work_branch(git: &dyn Git, hosting: &dyn HostingPlatform, prompter: &dyn Prompter, branch_type: &BranchType, breaking: Option<bool>, base: Option<String>, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
-    let commit_type = branch_type.commit_type().ok_or("Cannot finish: not on a work branch")?;
-    let name = branch_type.name().ok_or("Cannot finish: branch has no name")?;
+    let (commit_type, name) = branch_type.commit_type().zip(branch_type.name())
+        .ok_or("Cannot finish: not on a work branch")?;
     let current = git.current_branch()?;
     // Validate an explicit --base before anything else (cheap, local), but check
     // for an already-merged PR before parent detection and the breaking prompt —
@@ -236,24 +236,4 @@ pub fn finish_release_chore(git: &dyn Git, hosting: &dyn HostingPlatform, branch
         return Err("Cannot finish: not on a release-chore branch".to_string());
     };
     finish_fix(git, hosting, "chore", name, &SemVer::new(*major, *minor, *patch).release_branch(), template, accept_merge_type)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::pr_title;
-
-    #[test]
-    fn hyphens_become_spaces() {
-        assert_eq!(pr_title("feat", false, "foo-bar"), "feat: foo bar");
-    }
-
-    #[test]
-    fn breaking_adds_bang_before_colon() {
-        assert_eq!(pr_title("feat", true, "drop-legacy-api"), "feat!: drop legacy api");
-    }
-
-    #[test]
-    fn single_word_name_is_unchanged() {
-        assert_eq!(pr_title("chore", false, "cleanup"), "chore: cleanup");
-    }
 }

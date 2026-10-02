@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop-hook TDD gate. Blocks ending a turn when Rust code changed and either
-# tests fail or total line coverage fell below the ratcheting baseline.
+# tests fail, coverage is incomplete, or line coverage falls below the baseline.
 # The baseline (.claude/hooks/coverage-baseline.txt) only ever moves up;
 # lowering it requires explicit user approval (see CLAUDE.md, TDD Policy).
 set -u
@@ -12,20 +12,25 @@ command -v jq >/dev/null 2>&1 || exit 0
 BASELINE_FILE=.claude/hooks/coverage-baseline.txt
 CACHE_FILE=.claude/hooks/.tdd-gate-pass
 
-# Hash only Rust-relevant state: the src AND tests tree oids at HEAD, plus
-# pending changes to Rust sources. Commits or edits that touch no Rust code keep
-# the hash stable, so the expensive coverage run happens once per Rust change,
-# not per stop. `HEAD:tests` matters: a commit that changes only tests moves no
-# other input, and without it the gate would serve a stale pass from cache.
+# The cache covers committed inputs, pending Rust changes, and gate policy.
+# Untracked paths need content hashes: git diff omits them, and status reports
+# only their names. NUL-delimited paths preserve spaces and newlines.
 state_hash() {
   {
-    git rev-parse HEAD:src HEAD:tests HEAD:Cargo.toml 2>/dev/null
+    git rev-parse HEAD:src HEAD:tests HEAD:Cargo.toml HEAD:Cargo.lock 2>/dev/null
     git diff HEAD -- '*.rs' Cargo.toml Cargo.lock 2>/dev/null
     git status --porcelain -- '*.rs' Cargo.toml Cargo.lock 2>/dev/null
+    git ls-files --others --exclude-standard -z -- '*.rs' Cargo.toml Cargo.lock 2>/dev/null |
+      while IFS= read -r -d '' path; do
+        shasum -a 256 -- "$path"
+      done
+    shasum -a 256 -- "$0"
   } | shasum -a 256 | cut -d' ' -f1
 }
 
-HASH=$(state_hash)
+INPUT_HASH=$(state_hash)
+BASELINE=$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)
+HASH="$INPUT_HASH:$BASELINE"
 if [ -f "$CACHE_FILE" ] && [ "$(cat "$CACHE_FILE")" = "$HASH" ]; then
   exit 0
 fi
@@ -44,8 +49,19 @@ if [ $? -ne 0 ]; then
   exit 0
 fi
 
+if ! printf '%s' "$COV_JSON" | jq -e '
+  .data[0].totals | [.lines, .functions, .regions] |
+  all(.[];
+    (.count | type) == "number" and .count >= 0 and .count == (.count | floor) and
+    .covered == .count and
+    (.percent | type) == "number" and .percent >= 0 and .percent <= 100
+  )
+' >/dev/null 2>&1; then
+  jq -n '{decision: "block", reason: "TDD gate: lines, functions, and regions must each have every item covered (exactly 100%). Coverage counts are incomplete, missing, or malformed. Add tests and re-run `cargo llvm-cov --summary-only` before finishing."}'
+  exit 0
+fi
+
 PCT=$(printf '%s' "$COV_JSON" | jq -r '.data[0].totals.lines.percent')
-BASELINE=$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)
 
 if awk "BEGIN{exit !($PCT < $BASELINE - 0.005)}"; then
   GAPS=$(cargo llvm-cov report --summary-only 2>/dev/null | awk 'NF>10 && $1!="Filename" && $1!~/^-+$/ && $10+0<100 {printf "  %s  %s lines\n", $1, $10}')
@@ -56,7 +72,7 @@ fi
 
 if awk "BEGIN{exit !($PCT > $BASELINE + 0.005)}"; then
   printf '%.2f\n' "$PCT" > "$BASELINE_FILE"
-  echo "$HASH" > "$CACHE_FILE"
+  printf '%s:%.2f\n' "$INPUT_HASH" "$PCT" > "$CACHE_FILE"
   jq -n --arg pct "$(printf '%.2f' "$PCT")" '{systemMessage: ("tdd-gate: coverage ratcheted up to " + $pct + "%")}'
   exit 0
 fi

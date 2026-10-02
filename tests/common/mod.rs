@@ -3,22 +3,23 @@
 // warnings here are pure noise — silenced module-wide.
 #![allow(dead_code)]
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
 use gflow::action::validate_branch_name;
 use gflow::editor::Editor;
 use gflow::git::{CliOutput, CommandRunner, Git};
 use gflow::hosting::{CliRunner, HostingPlatform, PrBody};
 use gflow::prompt::Prompter;
 use gflow::version_script::VersionScript;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const MERGE_BASE: &str = "abc123";
 const REMOVED_WORKTREE_PATH: &str = "/repos/beans-gitflow-feature-x";
 
 pub struct MockGit {
     pub calls: RefCell<Vec<String>>,
+    pub fail_call: Option<(String, usize)>,
     pub current_branch: String,
     pub tags: Vec<String>,
     pub tags_on_branch: Vec<String>,
@@ -56,6 +57,7 @@ pub struct MockGit {
     pub create_branch_error: Option<String>,
     /// `stash_pop_ref` fails (simulates a conflicting pop).
     pub fail_stash_pop: bool,
+    pub fail_stash_push: bool,
     /// `find_stash_by_message` fails (simulates an unreadable stash list).
     pub fail_find_stash: bool,
 
@@ -121,6 +123,7 @@ impl MockGit {
     pub fn new() -> Self {
         Self {
             calls: RefCell::new(Vec::new()),
+            fail_call: None,
             current_branch: "develop".to_string(),
             tags: Vec::new(),
             tags_on_branch: Vec::new(),
@@ -140,6 +143,7 @@ impl MockGit {
             ff_merge_error: None,
             create_branch_error: None,
             fail_stash_pop: false,
+            fail_stash_push: false,
             fail_find_stash: false,
             ancestors: HashSet::new(),
             created_ancestors: RefCell::new(HashSet::new()),
@@ -172,7 +176,23 @@ impl MockGit {
     /// A mock whose `git_dir()` is a real temp directory, removed on drop.
     pub fn with_tmp_git_dir(prefix: &str) -> Self {
         let dir = tmp_dir(prefix);
-        Self { git_dir: dir.to_path_buf(), _git_dir_guard: Some(dir), ..Self::new() }
+        Self {
+            git_dir: dir.to_path_buf(),
+            _git_dir_guard: Some(dir),
+            ..Self::new()
+        }
+    }
+
+    fn record(&self, call: String) -> Result<(), String> {
+        let mut calls = self.calls.borrow_mut();
+        calls.push(call.clone());
+        if let Some((target, occurrence)) = &self.fail_call {
+            if &call == target && calls.iter().filter(|seen| *seen == target).count() == *occurrence
+            {
+                return Err(format!("injected git failure: {call}"));
+            }
+        }
+        Ok(())
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -189,51 +209,55 @@ impl MockGit {
 
 impl Git for MockGit {
     fn current_branch(&self) -> Result<String, String> {
-        self.calls.borrow_mut().push("current_branch".to_string());
+        self.record("current_branch".to_string())?;
         Ok(self.current_branch.clone())
     }
 
     fn fetch(&self) -> Result<(), String> {
-        self.calls.borrow_mut().push("fetch".to_string());
+        self.record("fetch".to_string())?;
         Ok(())
     }
 
     fn checkout(&self, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("checkout:{branch}"));
+        self.record(format!("checkout:{branch}"))?;
         Ok(())
     }
 
     fn create_branch(&self, branch: &str, from: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("create_branch:{branch}:{from}"));
+        self.record(format!("create_branch:{branch}:{from}"))?;
         self.create_branch_result()?;
-        self.created_ancestors.borrow_mut().insert((from.to_string(), branch.to_string()));
+        self.created_ancestors
+            .borrow_mut()
+            .insert((from.to_string(), branch.to_string()));
         Ok(())
     }
 
     fn create_branch_no_checkout(&self, branch: &str, from: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("create_branch_no_checkout:{branch}:{from}"));
+        self.record(format!("create_branch_no_checkout:{branch}:{from}"))?;
         self.create_branch_result()?;
-        self.created_ancestors.borrow_mut().insert((from.to_string(), branch.to_string()));
+        self.created_ancestors
+            .borrow_mut()
+            .insert((from.to_string(), branch.to_string()));
         Ok(())
     }
 
     fn push(&self, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("push:{branch}"));
+        self.record(format!("push:{branch}"))?;
         Ok(())
     }
 
     fn push_tag(&self, tag: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("push_tag:{tag}"));
+        self.record(format!("push_tag:{tag}"))?;
         Ok(())
     }
 
     fn create_tag(&self, tag: &str, message: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("create_tag:{tag}:{message}"));
+        self.record(format!("create_tag:{tag}:{message}"))?;
         Ok(())
     }
 
     fn merge(&self, branch: &str, message: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("merge:{branch}:{message}"));
+        self.record(format!("merge:{branch}:{message}"))?;
         let mut count = self.merge_call_count.borrow_mut();
         *count += 1;
         if Some(*count) == self.fail_nth_merge {
@@ -243,7 +267,7 @@ impl Git for MockGit {
     }
 
     fn ff_merge(&self, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("ff_merge:{branch}"));
+        self.record(format!("ff_merge:{branch}"))?;
         match &self.ff_merge_error {
             Some(e) => Err(e.clone()),
             None => Ok(()),
@@ -251,22 +275,27 @@ impl Git for MockGit {
     }
 
     fn list_tags(&self) -> Result<Vec<String>, String> {
-        self.calls.borrow_mut().push("list_tags".to_string());
+        self.record("list_tags".to_string())?;
         Ok(self.tags.clone())
     }
 
     fn list_branches_matching(&self, pattern: &str) -> Result<Vec<String>, String> {
-        self.calls.borrow_mut().push(format!("list_branches_matching:{pattern}"));
+        self.record(format!("list_branches_matching:{pattern}"))?;
         if let Some(matches) = self.branches_matching_by.get(pattern) {
             return Ok(matches.clone());
         }
         // git's ref patterns: `release/*` can never match `release-fix/…`.
         let prefix = pattern.strip_suffix('*').unwrap_or(pattern);
-        Ok(self.branches_matching.iter().filter(|b| b.starts_with(prefix)).cloned().collect())
+        Ok(self
+            .branches_matching
+            .iter()
+            .filter(|b| b.starts_with(prefix))
+            .cloned()
+            .collect())
     }
 
     fn is_working_tree_clean(&self) -> Result<bool, String> {
-        self.calls.borrow_mut().push("is_working_tree_clean".to_string());
+        self.record("is_working_tree_clean".to_string())?;
         match self.working_tree_clean_seq.borrow_mut().pop_front() {
             Some(clean) => Ok(clean),
             None => Ok(self.working_tree_clean),
@@ -274,55 +303,56 @@ impl Git for MockGit {
     }
 
     fn delete_branch_local(&self, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("delete_branch_local:{branch}"));
+        self.record(format!("delete_branch_local:{branch}"))?;
         Ok(())
     }
 
     fn delete_branch_remote(&self, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("delete_branch_remote:{branch}"));
+        self.record(format!("delete_branch_remote:{branch}"))?;
         Ok(())
     }
 
     fn tags_on_branch(&self, branch: &str) -> Result<Vec<String>, String> {
-        self.calls.borrow_mut().push(format!("tags_on_branch:{branch}"));
+        self.record(format!("tags_on_branch:{branch}"))?;
         Ok(self.tags_on_branch.clone())
     }
 
     fn list_remote_branches(&self) -> Result<Vec<String>, String> {
-        self.calls.borrow_mut().push("list_remote_branches".to_string());
+        self.record("list_remote_branches".to_string())?;
         Ok(self.remote_branches.clone())
     }
 
     fn merge_base(&self, a: &str, b: &str) -> Result<String, String> {
-        self.calls.borrow_mut().push(format!("merge_base:{a}:{b}"));
+        self.record(format!("merge_base:{a}:{b}"))?;
         if self.fail_merge_base_for.iter().any(|r| r == b) {
             return Err(format!("no merge base between {a} and {b}"));
         }
-        Ok(self.merge_bases
+        Ok(self
+            .merge_bases
             .get(&(a.to_string(), b.to_string()))
             .cloned()
             .unwrap_or_else(|| MERGE_BASE.to_string()))
     }
 
     fn rev_list_count(&self, from: &str, to: &str) -> Result<u32, String> {
-        self.calls.borrow_mut().push(format!("rev_list_count:{from}:{to}"));
+        self.record(format!("rev_list_count:{from}:{to}"))?;
         if self.fail_rev_list_count_for.iter().any(|r| r == to) {
             return Err(format!("bad revision: {to}"));
         }
-        Ok(*self.rev_list_counts
+        Ok(*self
+            .rev_list_counts
             .get(&(from.to_string(), to.to_string()))
             .unwrap_or(&self.rev_list_count_result))
     }
     fn commit_parent_count(&self, sha: &str) -> Result<u32, String> {
-        self.calls.borrow_mut().push(format!("commit_parent_count:{sha}"));
-        self.parent_counts
-            .get(sha)
-            .copied()
-            .ok_or(format!("Could not read parents of commit '{sha}'. Run 'git fetch' and retry."))
+        self.record(format!("commit_parent_count:{sha}"))?;
+        self.parent_counts.get(sha).copied().ok_or(format!(
+            "Could not read parents of commit '{sha}'. Run 'git fetch' and retry."
+        ))
     }
 
     fn commit_messages(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
-        self.calls.borrow_mut().push(format!("commit_messages:{from}:{to}"));
+        self.record(format!("commit_messages:{from}:{to}"))?;
         if self.fail_commit_messages_for.iter().any(|r| r == to) {
             return Err(format!("ref not found: {to}"));
         }
@@ -330,53 +360,53 @@ impl Git for MockGit {
     }
 
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("is_ancestor:{ancestor}:{descendant}"));
+        self.record(format!("is_ancestor:{ancestor}:{descendant}"))?;
         let key = (ancestor.to_string(), descendant.to_string());
         Ok(self.ancestors.contains(&key) || self.created_ancestors.borrow().contains(&key))
     }
 
     fn tag_exists(&self, tag: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("tag_exists:{tag}"));
+        self.record(format!("tag_exists:{tag}"))?;
         Ok(self.existing_tags.contains(tag))
     }
 
     fn local_branch_exists(&self, branch: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("local_branch_exists:{branch}"));
+        self.record(format!("local_branch_exists:{branch}"))?;
         Ok(self.existing_local_branches.contains(branch))
     }
 
     fn remote_branch_exists(&self, branch: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("remote_branch_exists:{branch}"));
+        self.record(format!("remote_branch_exists:{branch}"))?;
         Ok(self.existing_remote_branches.contains(branch))
     }
 
     fn remote_tag_exists(&self, tag: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("remote_tag_exists:{tag}"));
+        self.record(format!("remote_tag_exists:{tag}"))?;
         Ok(self.existing_remote_tags.contains(tag))
     }
 
     fn is_pushed(&self, branch: &str) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("is_pushed:{branch}"));
+        self.record(format!("is_pushed:{branch}"))?;
         Ok(self.pushed_branches.contains(branch))
     }
 
     fn is_mid_merge(&self) -> Result<bool, String> {
-        self.calls.borrow_mut().push("is_mid_merge".to_string());
+        self.record("is_mid_merge".to_string())?;
         Ok(self.mid_merge)
     }
 
     fn has_unmerged_paths(&self) -> Result<bool, String> {
-        self.calls.borrow_mut().push("has_unmerged_paths".to_string());
+        self.record("has_unmerged_paths".to_string())?;
         Ok(self.unmerged_paths)
     }
 
     fn git_dir(&self) -> Result<PathBuf, String> {
-        self.calls.borrow_mut().push("git_dir".to_string());
+        self.record("git_dir".to_string())?;
         Ok(self.git_dir.clone())
     }
 
     fn remote_url(&self) -> Result<String, String> {
-        self.calls.borrow_mut().push("remote_url".to_string());
+        self.record("remote_url".to_string())?;
         if self.fail_remote_url {
             return Err("No such remote 'origin'".to_string());
         }
@@ -384,51 +414,62 @@ impl Git for MockGit {
     }
 
     fn get_config(&self, key: &str) -> Result<Option<String>, String> {
-        self.calls.borrow_mut().push(format!("get_config:{key}"));
-        Ok(self.config.get(key).or_else(|| self.config_global.get(key)).cloned())
+        self.record(format!("get_config:{key}"))?;
+        Ok(self
+            .config
+            .get(key)
+            .or_else(|| self.config_global.get(key))
+            .cloned())
     }
     fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>, String> {
         let scope = if global { "global" } else { "local" };
-        self.calls.borrow_mut().push(format!("get_config_at:{scope}:{key}"));
-        let source = if global { &self.config_global } else { &self.config };
+        self.record(format!("get_config_at:{scope}:{key}"))?;
+        let source = if global {
+            &self.config_global
+        } else {
+            &self.config
+        };
         Ok(source.get(key).cloned())
     }
 
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<(), String> {
         let scope = if global { "global" } else { "local" };
-        self.calls.borrow_mut().push(format!("set_config:{scope}:{key}:{value}"));
+        self.record(format!("set_config:{scope}:{key}:{value}"))?;
         Ok(())
     }
 
     fn unset_config(&self, key: &str, global: bool) -> Result<(), String> {
         let scope = if global { "global" } else { "local" };
-        self.calls.borrow_mut().push(format!("unset_config:{scope}:{key}"));
+        self.record(format!("unset_config:{scope}:{key}"))?;
         Ok(())
     }
 
     fn repo_root(&self) -> Result<PathBuf, String> {
-        self.calls.borrow_mut().push("repo_root".to_string());
+        self.record("repo_root".to_string())?;
         Ok(self.repo_root.clone())
     }
 
     fn worktree_root(&self) -> Result<PathBuf, String> {
-        self.calls.borrow_mut().push("worktree_root".to_string());
+        self.record("worktree_root".to_string())?;
         Ok(self.worktree_root.clone())
     }
 
     fn add_worktree(&self, path: &Path, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("add_worktree:{}:{branch}", path.display()));
+        self.record(format!("add_worktree:{}:{branch}", path.display()))?;
         Ok(())
     }
 
     fn stash_push_with_message(&self, msg: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("stash_push_with_message:{msg}"));
+        self.record(format!("stash_push_with_message:{msg}"))?;
+        if self.fail_stash_push {
+            return Err("could not save the stash".to_string());
+        }
         self.stashes.borrow_mut().insert(0, msg.to_string());
         Ok(())
     }
 
     fn find_stash_by_message(&self, msg: &str) -> Result<Option<String>, String> {
-        self.calls.borrow_mut().push(format!("find_stash_by_message:{msg}"));
+        self.record(format!("find_stash_by_message:{msg}"))?;
         if self.fail_find_stash {
             return Err("could not read the stash list".to_string());
         }
@@ -442,7 +483,7 @@ impl Git for MockGit {
     }
 
     fn stash_pop_ref(&self, stash_ref: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("stash_pop_ref:{stash_ref}"));
+        self.record(format!("stash_pop_ref:{stash_ref}"))?;
         if self.fail_stash_pop {
             return Err("conflict while popping".to_string());
         }
@@ -450,69 +491,77 @@ impl Git for MockGit {
     }
 
     fn worktree_of(&self, branch: &str) -> Result<Option<PathBuf>, String> {
-        self.calls.borrow_mut().push(format!("worktree_of:{branch}"));
+        self.record(format!("worktree_of:{branch}"))?;
         Ok(self.worktrees.get(branch).cloned())
     }
     fn is_working_tree_clean_at(&self, path: &Path) -> Result<bool, String> {
-        self.calls.borrow_mut().push(format!("is_working_tree_clean_at:{}", path.display()));
+        self.record(format!("is_working_tree_clean_at:{}", path.display()))?;
         Ok(self.working_tree_clean)
     }
     fn ff_merge_at(&self, path: &Path, branch: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("ff_merge_at:{}:{branch}", path.display()));
+        self.record(format!("ff_merge_at:{}:{branch}", path.display()))?;
         Ok(())
     }
     fn merge_at(&self, path: &Path, branch: &str, message: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("merge_at:{}:{branch}:{message}", path.display()));
+        self.record(format!("merge_at:{}:{branch}:{message}", path.display()))?;
         Ok(())
     }
     fn is_linked_worktree(&self) -> Result<bool, String> {
-        self.calls.borrow_mut().push("is_linked_worktree".to_string());
+        self.record("is_linked_worktree".to_string())?;
         Ok(self.linked_worktree)
     }
 
     fn remove_current_worktree(&self) -> Result<PathBuf, String> {
-        self.calls.borrow_mut().push("remove_current_worktree".to_string());
+        self.record("remove_current_worktree".to_string())?;
         Ok(PathBuf::from(REMOVED_WORKTREE_PATH))
     }
 
     fn head_sha(&self) -> Result<String, String> {
-        self.calls.borrow_mut().push("head_sha".to_string());
+        self.record("head_sha".to_string())?;
         Ok(self.head_sha.clone())
     }
 
     fn detach_head(&self) -> Result<(), String> {
-        self.calls.borrow_mut().push("detach_head".to_string());
+        self.record("detach_head".to_string())?;
         Ok(())
     }
 
     fn stage_all(&self) -> Result<(), String> {
-        self.calls.borrow_mut().push("stage_all".to_string());
+        self.record("stage_all".to_string())?;
         Ok(())
     }
 
     fn commit(&self, message: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("commit:{message}"));
+        self.record(format!("commit:{message}"))?;
         Ok(())
     }
 
     fn create_tag_at(&self, tag: &str, message: &str, sha: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("create_tag_at:{tag}:{message}:{sha}"));
+        self.record(format!("create_tag_at:{tag}:{message}:{sha}"))?;
         Ok(())
     }
 
     fn tag_commit_sha(&self, tag: &str) -> Result<String, String> {
-        self.calls.borrow_mut().push(format!("tag_commit_sha:{tag}"));
-        self.tag_commits.get(tag).cloned().ok_or_else(|| format!("tag {tag} does not exist"))
+        self.record(format!("tag_commit_sha:{tag}"))?;
+        self.tag_commits
+            .get(tag)
+            .cloned()
+            .ok_or_else(|| format!("tag {tag} does not exist"))
     }
 
     fn branch_sha(&self, branch: &str) -> Result<String, String> {
-        self.calls.borrow_mut().push(format!("branch_sha:{branch}"));
-        Ok(self.branch_shas.get(branch).cloned().unwrap_or_else(|| self.head_sha.clone()))
+        self.record(format!("branch_sha:{branch}"))?;
+        Ok(self
+            .branch_shas
+            .get(branch)
+            .cloned()
+            .unwrap_or_else(|| self.head_sha.clone()))
     }
 }
 
 pub struct MockHosting {
     pub calls: RefCell<Vec<String>>,
+    pub fail_call: Option<(String, usize)>,
     /// (head, base) -> url of an OPEN PR, for `open_pr_to`.
     pub open_prs_to: HashMap<(String, String), String>,
     /// When set, `open_url` fails with this (the call is still recorded).
@@ -530,6 +579,7 @@ impl MockHosting {
     pub fn new() -> Self {
         Self {
             calls: RefCell::new(Vec::new()),
+            fail_call: None,
             open_prs_to: HashMap::new(),
             open_url_error: None,
             copy_text_error: None,
@@ -539,39 +589,67 @@ impl MockHosting {
         }
     }
 
+    fn record(&self, call: String) -> Result<(), String> {
+        let mut calls = self.calls.borrow_mut();
+        calls.push(call.clone());
+        if let Some((target, occurrence)) = &self.fail_call {
+            if &call == target && calls.iter().filter(|seen| *seen == target).count() == *occurrence
+            {
+                return Err(format!("injected hosting failure: {call}"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
     }
 }
 
 impl HostingPlatform for MockHosting {
-    fn create_or_get_pr(&self, head: &str, base: &str, title: &str, body: PrBody<'_>) -> Result<String, String> {
+    fn create_or_get_pr(
+        &self,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: PrBody<'_>,
+    ) -> Result<String, String> {
         let suffix = match body {
             PrBody::File(t) => format!(":template={t}"),
             PrBody::NativeDefault => String::new(),
             PrBody::Empty => ":empty-body".to_string(),
         };
-        self.calls.borrow_mut().push(format!("create_or_get_pr:{head}:{base}:{title}{suffix}"));
+        self.record(format!("create_or_get_pr:{head}:{base}:{title}{suffix}"))?;
         Ok(self.pr_url.clone())
     }
 
     fn merged_pr(&self, head: &str) -> Result<Option<gflow::hosting::MergedPr>, String> {
-        self.calls.borrow_mut().push(format!("merged_pr:{head}"));
+        self.record(format!("merged_pr:{head}"))?;
         Ok(self.merged_pr.clone())
     }
 
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>, String> {
-        self.calls.borrow_mut().push(format!("open_pr_to:{head}:{base}"));
-        Ok(self.open_prs_to.get(&(head.to_string(), base.to_string())).cloned())
+        self.record(format!("open_pr_to:{head}:{base}"))?;
+        Ok(self
+            .open_prs_to
+            .get(&(head.to_string(), base.to_string()))
+            .cloned())
     }
 
-    fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<gflow::hosting::LandedPr>, String> {
-        self.calls.borrow_mut().push(format!("merged_pr_to:{head}:{base}"));
-        Ok(self.merged_prs_to.get(&(head.to_string(), base.to_string())).cloned())
+    fn merged_pr_to(
+        &self,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<gflow::hosting::LandedPr>, String> {
+        self.record(format!("merged_pr_to:{head}:{base}"))?;
+        Ok(self
+            .merged_prs_to
+            .get(&(head.to_string(), base.to_string()))
+            .cloned())
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("open_url:{url}"));
+        self.record(format!("open_url:{url}"))?;
         match &self.open_url_error {
             Some(e) => Err(e.clone()),
             None => Ok(()),
@@ -579,16 +657,11 @@ impl HostingPlatform for MockHosting {
     }
 
     fn copy_text(&self, text: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("copy_text:{text}"));
+        self.record(format!("copy_text:{text}"))?;
         match &self.copy_text_error {
             Some(e) => Err(e.clone()),
             None => Ok(()),
         }
-    }
-
-    fn check_auth(&self) -> Result<(), String> {
-        self.calls.borrow_mut().push("check_auth".to_string());
-        Ok(())
     }
 }
 
@@ -600,7 +673,10 @@ pub struct MockWorktreeSetup {
 
 impl MockWorktreeSetup {
     pub fn new() -> Self {
-        Self { calls: RefCell::new(Vec::new()), fail: HashSet::new() }
+        Self {
+            calls: RefCell::new(Vec::new()),
+            fail: HashSet::new(),
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -610,8 +686,16 @@ impl MockWorktreeSetup {
 
 impl gflow::worktree_setup::WorktreeSetup for MockWorktreeSetup {
     fn run_command(&self, worktree: &Path, main_root: &Path, command: &str) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("run:{}:{}:{command}", worktree.display(), main_root.display()));
-        if self.fail.contains(command) { Err("boom".to_string()) } else { Ok(()) }
+        self.calls.borrow_mut().push(format!(
+            "run:{}:{}:{command}",
+            worktree.display(),
+            main_root.display()
+        ));
+        if self.fail.contains(command) {
+            Err("boom".to_string())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -623,7 +707,10 @@ pub struct MockEditor {
 
 impl MockEditor {
     pub fn new() -> Self {
-        Self { calls: RefCell::new(Vec::new()), fail: false }
+        Self {
+            calls: RefCell::new(Vec::new()),
+            fail: false,
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -633,7 +720,9 @@ impl MockEditor {
 
 impl Editor for MockEditor {
     fn open(&self, path: &Path) -> Result<(), String> {
-        self.calls.borrow_mut().push(format!("open:{}", path.display()));
+        self.calls
+            .borrow_mut()
+            .push(format!("open:{}", path.display()));
         if self.fail {
             Err("editor failed".to_string())
         } else {
@@ -656,7 +745,12 @@ pub struct MockVersionScript {
 
 impl MockVersionScript {
     pub fn new() -> Self {
-        Self { calls: RefCell::new(Vec::new()), fail: None, fail_nth_run: None, run_call_count: RefCell::new(0) }
+        Self {
+            calls: RefCell::new(Vec::new()),
+            fail: None,
+            fail_nth_run: None,
+            run_call_count: RefCell::new(0),
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -712,12 +806,17 @@ impl MockPrompter {
 
     /// Queue the answers to `prompt_name` / `prompt_line`, in order.
     pub fn with_lines(self, lines: &[&str]) -> Self {
-        self.lines.borrow_mut().extend(lines.iter().map(|s| s.to_string()));
+        self.lines
+            .borrow_mut()
+            .extend(lines.iter().map(|s| s.to_string()));
         self
     }
 
     pub fn aborting() -> Self {
-        Self { abort: true, ..Self::new() }
+        Self {
+            abort: true,
+            ..Self::new()
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -729,18 +828,24 @@ impl MockPrompter {
         if self.abort {
             return Err("Aborted".to_string());
         }
-        self.lines.borrow_mut().pop_front()
+        self.lines
+            .borrow_mut()
+            .pop_front()
             .ok_or_else(|| format!("MockPrompter: unscripted {kind}('{prompt}')"))
     }
 }
 
 impl Prompter for MockPrompter {
     fn select(&self, prompt: &str, items: &[&str]) -> Result<usize, String> {
-        self.calls.borrow_mut().push(format!("select:{prompt}:[{}]", items.join(", ")));
+        self.calls
+            .borrow_mut()
+            .push(format!("select:{prompt}:[{}]", items.join(", ")));
         if self.abort {
             return Err("Aborted".to_string());
         }
-        self.selections.borrow_mut().pop_front()
+        self.selections
+            .borrow_mut()
+            .pop_front()
             .ok_or_else(|| format!("MockPrompter: unscripted select('{prompt}')"))
     }
 
@@ -775,7 +880,8 @@ impl MockCliRunner {
         Self {
             calls: RefCell::new(Vec::new()),
             responses: RefCell::new(
-                responses.iter()
+                responses
+                    .iter()
                     .map(|r| r.map(str::to_string).map_err(str::to_string))
                     .collect(),
             ),
@@ -789,8 +895,12 @@ impl MockCliRunner {
 
 impl CliRunner for MockCliRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<String, String> {
-        self.calls.borrow_mut().push(format!("{program} {}", args.join(" ")));
-        self.responses.borrow_mut().pop_front()
+        self.calls
+            .borrow_mut()
+            .push(format!("{program} {}", args.join(" ")));
+        self.responses
+            .borrow_mut()
+            .pop_front()
             .unwrap_or_else(|| Err(format!("MockCliRunner: unscripted call to {program}")))
     }
 }
@@ -828,7 +938,10 @@ impl MockCommandRunner {
     }
 
     fn from_outputs(outputs: impl Iterator<Item = CliOutput>) -> Self {
-        Self { calls: RefCell::new(Vec::new()), responses: RefCell::new(outputs.collect()) }
+        Self {
+            calls: RefCell::new(Vec::new()),
+            responses: RefCell::new(outputs.collect()),
+        }
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -838,9 +951,15 @@ impl MockCommandRunner {
 
 impl CommandRunner for MockCommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<CliOutput, String> {
-        self.calls.borrow_mut().push(format!("{program} {}", args.join(" ")));
-        self.responses.borrow_mut().pop_front()
-            .ok_or_else(|| format!("MockCommandRunner: unscripted call to {program} {}", args.join(" ")))
+        self.calls
+            .borrow_mut()
+            .push(format!("{program} {}", args.join(" ")));
+        self.responses.borrow_mut().pop_front().ok_or_else(|| {
+            format!(
+                "MockCommandRunner: unscripted call to {program} {}",
+                args.join(" ")
+            )
+        })
     }
 }
 

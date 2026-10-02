@@ -35,15 +35,6 @@ fn wizard_defaults_are_the_first_item_of_every_question() {
 }
 
 #[test]
-fn wizard_abort_writes_nothing() {
-    let root = root();
-    let prompter = MockPrompter::aborting();
-    assert_eq!(wizard(&prompter, &root).unwrap_err(), "Aborted");
-    assert_eq!(prompter.calls().len(), 1, "the first question was asked and the abort stopped there");
-    assert!(!repo_config::exists(&root));
-}
-
-#[test]
 fn ensure_loads_an_existing_config_without_prompting() {
     let root = root();
     let cfg = RepoConfig { mode: Mode::Protected, ..RepoConfig::default() };

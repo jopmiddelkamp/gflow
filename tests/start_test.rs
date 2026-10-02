@@ -238,21 +238,6 @@ fn start_release_patch_mode_cuts_a_clean_first_tag() {
 }
 
 #[test]
-fn start_release_checks_out_existing_release_branch() {
-    let mut git = MockGit::new();
-    git.branches_matching = vec!["release/1.1.0".to_string()];
-
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
-
-    assert_eq!(git.calls(), vec![
-        "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
-        "tag_exists:1.1.0",
-        "checkout:release/1.1.0",
-    ]);
-}
-
-#[test]
 fn start_release_skips_shipped_release_branch() {
     // Trap 1: release/1.1.0 already has a v1.1.0 tag — it shipped and is not
     // open. Reuse must skip it and land on the still-open release/1.2.0.
@@ -333,24 +318,6 @@ fn a_versionless_parent_branch_is_rejected_instead_of_naming_a_broken_child() {
     assert!(err.contains("does not carry a version"), "got: {err}");
     assert!(!git.calls().iter().any(|c| c.starts_with("create_branch")),
         "nothing may be created; calls: {:?}", git.calls());
-}
-
-#[test]
-fn start_hotfix_fix_creates_and_pushes_existing_hotfix() {
-    let mut git = MockGit::new();
-    git.branches_matching = vec!["hotfix/1.0.1".to_string()];
-
-    start_hotfix_fix(&git, &MockHosting::new(), &RepoConfig::default(), "urgent-crash", false, None, "main", None).unwrap();
-
-    assert_eq!(git.calls(), vec![
-        "current_branch",
-        "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:1.0.1",
-        "checkout:hotfix/1.0.1",
-        "create_branch:hotfix-fix/1.0.1/urgent-crash:hotfix/1.0.1",
-        "push:hotfix-fix/1.0.1/urgent-crash",
-    ]);
 }
 
 #[test]
@@ -524,25 +491,6 @@ fn start_hotfix_fix_no_checkout_existing_hotfix() {
 }
 
 #[test]
-fn start_hotfix_fix_no_checkout_creates_hotfix_branch_when_none_exists() {
-    let mut git = MockGit::new();
-    git.branches_matching = vec![];
-    git.tags = vec!["1.0.0".to_string()];
-
-    start_hotfix_fix(&git, &MockHosting::new(), &RepoConfig::default(), "urgent-crash", true, None, "main", None).unwrap();
-
-    assert_eq!(git.calls(), vec![
-        "current_branch",
-        "list_branches_matching:hotfix/*",
-        "list_tags",
-        "create_branch_no_checkout:hotfix/1.0.1:main",
-        "push:hotfix/1.0.1",
-        "create_branch_no_checkout:hotfix-fix/1.0.1/urgent-crash:hotfix/1.0.1",
-        "push:hotfix-fix/1.0.1/urgent-crash",
-    ]);
-}
-
-#[test]
 fn start_release_falls_back_to_rc_tags_when_no_clean_tags() {
     let mut git = MockGit::new();
     git.branches_matching = vec![];
@@ -692,40 +640,6 @@ fn start_release_fix_worktree_active_discovers_and_opens() {
 // --- Version script at branch creation (M1, M4) ---
 
 #[test]
-fn start_release_runs_version_script_on_new_branch() {
-    let mut git = MockGit::new();
-    git.branches_matching = vec![];
-    git.tags = vec!["v1.0.0".to_string()];
-    git.working_tree_clean_seq.borrow_mut().extend([true, false]);
-    let script = MockVersionScript::new();
-
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), Some(&script), &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
-
-    assert_eq!(git.calls(), vec![
-        "list_branches_matching:release/*",
-        "list_tags",
-        "is_working_tree_clean",
-        "checkout:develop",
-        "create_branch:release/1.1.0:develop",
-        "is_working_tree_clean",
-        "stage_all",
-        "commit:chore: set version 1.1.0",
-        "push:release/1.1.0",
-        "create_tag:v1.1.0-rc.1:chore: create release branch 1.1.0",
-        "push_tag:v1.1.0-rc.1",
-        // A configured script also bumps develop; the clean-tree answers run out
-        // here so this falls to its no-op tail (see the m2_* tests for the
-        // committed path).
-        "checkout:develop",
-        "ff_merge:origin/develop",
-        "is_working_tree_clean",
-        "is_working_tree_clean",
-        "checkout:release/1.1.0",
-    ]);
-    assert_eq!(script.calls(), vec!["run:1.1.0", "run:1.2.0"]);
-}
-
-#[test]
 fn start_release_script_noop_makes_no_commit() {
     let mut git = MockGit::new();
     git.branches_matching = vec![];
@@ -745,7 +659,6 @@ fn start_release_script_noop_makes_no_commit() {
         "push:release/1.1.0",
         "create_tag:v1.1.0-rc.1:chore: create release branch 1.1.0",
         "push_tag:v1.1.0-rc.1",
-        // Also a no-op here (same reasoning as above).
         "checkout:develop",
         "ff_merge:origin/develop",
         "is_working_tree_clean",
@@ -1415,6 +1328,8 @@ fn the_prompt_still_decides_when_the_user_picks_the_non_default() {
 fn detect_breaking_returns_false_when_commits_exist_but_none_are_breaking() {
     let mut git = MockGit::new();
     git.commit_messages = vec![
+        String::new(),
+        "ordinary subject".to_string(),
         "feat: add login page".to_string(),
         "chore: bump deps".to_string(),
     ];

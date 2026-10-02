@@ -32,7 +32,14 @@ jobs:
             --allowedTools "Bash(gh api:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr list:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git blame:*),Bash(git log:*),Bash(git rev-parse:*)"
           plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
           plugins: "code-review@claude-code-plugins"
-          prompt: "/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment"
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
+
+            For test changes, check nearby tests and table cases for the same contract.
+            Flag redundant tests only when setup, assertions, entry point, and platform match.
+            Name the retained test for every proposed deletion; preserve distinct errors and boundaries.
+            Equal code coverage alone does not prove that tests are redundant.
+            Check that cleanup includes before-and-after line, function, and region coverage evidence.
           show_full_output: true
 
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

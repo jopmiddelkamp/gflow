@@ -4,6 +4,8 @@ use common::MockPrompter;
 use gflow::action::Action;
 use gflow::git::branch::BranchType;
 use gflow::menu::show_menu;
+use gflow::prompt::Prompter;
+use std::cell::Cell;
 
 // `show_menu` is the interactive half of "one Action enum is the single
 // currency" (decisions.md, CLI/UX Conventions) — the branch-type gating table
@@ -195,9 +197,72 @@ fn the_unrecognized_branch_error_names_the_configured_mainline() {
 fn aborting_the_menu_propagates_instead_of_picking_something() {
     // Ctrl-C/Esc surface as Err("Aborted") through the normal path so terminal
     // cleanup and stash restore still run.
-    let prompter = MockPrompter::aborting();
+    for branch in [
+        "main", "develop", "feature/login", "fix/login", "chore/login",
+        "docs/login", "refactor/login", "release/2.5.0", "hotfix/2.5.1",
+        "release-fix/2.5.0/db", "release-chore/2.5.0/version", "hotfix-fix/2.5.1/npe",
+    ] {
+        let prompter = MockPrompter::aborting();
+        let err = show_menu(&prompter, &BranchType::parse(branch), branch, "main").unwrap_err();
+        assert_eq!(err, "Aborted", "{branch}");
+        assert_eq!(prompter.calls().len(), 1, "abort must stop before asking another question");
+    }
+}
 
-    let err = show_menu(&prompter, &BranchType::Develop, "develop", "main").unwrap_err();
+struct AbortAtPrompt {
+    inner: MockPrompter,
+    fail_at: usize,
+    calls: Cell<usize>,
+}
 
-    assert_eq!(err, "Aborted");
+impl AbortAtPrompt {
+    fn next(&self) -> Result<(), String> {
+        let calls = self.calls.get() + 1;
+        self.calls.set(calls);
+        if calls == self.fail_at { Err("Aborted".into()) } else { Ok(()) }
+    }
+}
+
+impl Prompter for AbortAtPrompt {
+    fn select(&self, prompt: &str, items: &[&str]) -> Result<usize, String> {
+        self.next()?;
+        self.inner.select(prompt, items)
+    }
+
+    fn prompt_name(&self, prompt: &str) -> Result<String, String> {
+        self.next()?;
+        self.inner.prompt_name(prompt)
+    }
+
+    fn prompt_line(&self, prompt: &str) -> Result<String, String> {
+        self.next()?;
+        self.inner.prompt_line(prompt)
+    }
+}
+
+#[test]
+fn aborting_a_branch_name_never_returns_a_start_action() {
+    for (branch, selection) in [
+        ("main", 0), ("develop", 0), ("feature/login", 1),
+        ("release/2.5.0", 1), ("hotfix/2.5.1", 1),
+    ] {
+        let prompter = AbortAtPrompt {
+            inner: MockPrompter::scripted(&[selection]),
+            fail_at: 2,
+            calls: Cell::new(0),
+        };
+        assert_eq!(show_menu(&prompter, &BranchType::parse(branch), branch, "main"), Err("Aborted".into()), "{branch}");
+        assert_eq!(prompter.calls.get(), 2, "name abort must stop before selecting a base");
+    }
+}
+
+#[test]
+fn aborting_the_base_choice_does_not_default_to_a_branch() {
+    let prompter = AbortAtPrompt {
+        inner: MockPrompter::scripted(&[1]).with_lines(&["captcha"]),
+        fail_at: 3,
+        calls: Cell::new(0),
+    };
+    assert_eq!(show_menu(&prompter, &BranchType::parse("feature/login"), "feature/login", "main"), Err("Aborted".into()));
+    assert_eq!(prompter.calls.get(), 3);
 }

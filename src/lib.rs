@@ -1,4 +1,6 @@
 pub mod action;
+#[cfg(test)]
+extern crate self as gflow;
 pub mod cli;
 pub mod editor;
 pub mod flows;

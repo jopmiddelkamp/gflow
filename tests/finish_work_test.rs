@@ -8,7 +8,8 @@ use gflow::git::branch::BranchType;
 fn finish_release_fix_pushes_and_creates_pr() {
     let mut git = MockGit::new();
     git.current_branch = "release-fix/1.1.0/login-bug".to_string();
-    let hosting = MockHosting::new();
+    let mut hosting = MockHosting::new();
+    hosting.pr_url = "https://github.com/org/repo/pull/42".to_string();
     let branch_type = BranchType::ReleaseFix { major: 1, minor: 1, patch: 0, name: "login-bug".to_string() };
 
     finish_release_fix(&git, &hosting, &branch_type, None, false).unwrap();
@@ -21,8 +22,8 @@ fn finish_release_fix_pushes_and_creates_pr() {
     assert_eq!(hosting.calls(), vec![
         "merged_pr:release-fix/1.1.0/login-bug",
         "create_or_get_pr:release-fix/1.1.0/login-bug:release/1.1.0:fix: login bug",
-        "copy_text:fix: login bug\nhttps://github.com/org/repo/pull/1",
-        "open_url:https://github.com/org/repo/pull/1",
+        "copy_text:fix: login bug\nhttps://github.com/org/repo/pull/42",
+        "open_url:https://github.com/org/repo/pull/42",
     ]);
 }
 
@@ -81,24 +82,6 @@ fn finish_hotfix_fix_pushes_and_creates_pr() {
 }
 
 #[test]
-fn finish_release_fix_with_custom_pr_url() {
-    let mut git = MockGit::new();
-    git.current_branch = "release-fix/2.0.0/typo".to_string();
-    let mut hosting = MockHosting::new();
-    hosting.pr_url = "https://github.com/org/repo/pull/42".to_string();
-    let branch_type = BranchType::ReleaseFix { major: 2, minor: 0, patch: 0, name: "typo".to_string() };
-
-    finish_release_fix(&git, &hosting, &branch_type, None, false).unwrap();
-
-    assert_eq!(hosting.calls(), vec![
-        "merged_pr:release-fix/2.0.0/typo",
-        "create_or_get_pr:release-fix/2.0.0/typo:release/2.0.0:fix: typo",
-        "copy_text:fix: typo\nhttps://github.com/org/repo/pull/42",
-        "open_url:https://github.com/org/repo/pull/42",
-    ]);
-}
-
-#[test]
 fn finish_release_chore_pushes_and_creates_pr() {
     let mut git = MockGit::new();
     git.current_branch = "release-chore/1.1.0/set-version".to_string();
@@ -123,60 +106,25 @@ fn finish_release_chore_pushes_and_creates_pr() {
 // --- finish_work_branch tests ---
 
 #[test]
-fn finish_work_branch_feature_non_breaking() {
-    let mut git = MockGit::new();
-    git.current_branch = "feature/login".to_string();
-    let hosting = MockHosting::new();
-    let branch_type = BranchType::Feature { name: "login".to_string() };
+fn finish_work_branch_titles_follow_the_work_type_and_breaking_flag() {
+    for (case, current, branch_type, breaking, title) in [
+        ("feature_non_breaking", "feature/login", BranchType::Feature { name: "login".into() }, Some(false), "feat: login"),
+        ("feature_breaking", "feature/remove-api", BranchType::Feature { name: "remove-api".into() }, Some(true), "feat!: remove api"),
+        ("chore_breaking_honored", "chore/drop-node-16", BranchType::Chore { name: "drop-node-16".into() }, Some(true), "chore!: drop node 16"),
+        ("docs_defaults_to_non_breaking", "docs/readme", BranchType::Docs { name: "readme".into() }, None, "docs: readme"),
+        ("fix_breaking", "fix/auth", BranchType::Fix { name: "auth".into() }, Some(true), "fix!: auth"),
+    ] {
+        let mut git = MockGit::new();
+        git.current_branch = current.to_string();
+        let hosting = MockHosting::new();
 
-    finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, Some(false), None, None, false).unwrap();
+        finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, breaking, None, None, false)
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
 
-    let calls = hosting.calls();
-    assert!(calls[1].starts_with("create_or_get_pr:feature/login:"));
-    assert!(calls[1].ends_with(":feat: login"));
-}
-
-#[test]
-fn finish_work_branch_feature_breaking() {
-    let mut git = MockGit::new();
-    git.current_branch = "feature/remove-api".to_string();
-    let hosting = MockHosting::new();
-    let branch_type = BranchType::Feature { name: "remove-api".to_string() };
-
-    finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, Some(true), None, None, false).unwrap();
-
-    let calls = hosting.calls();
-    assert!(calls[1].ends_with(":feat!: remove api"),
-        "Expected PR title to end with 'feat!: remove api', got: {}", calls[1]);
-}
-
-#[test]
-fn finish_work_branch_chore_breaking_honored() {
-    let mut git = MockGit::new();
-    git.current_branch = "chore/drop-node-16".to_string();
-    let hosting = MockHosting::new();
-    let branch_type = BranchType::Chore { name: "drop-node-16".to_string() };
-
-    finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, Some(true), None, None, false).unwrap();
-
-    let calls = hosting.calls();
-    assert!(calls[1].ends_with(":chore!: drop node 16"),
-        "Explicit --breaking should be honored on chore, got: {}", calls[1]);
-}
-
-#[test]
-fn finish_work_branch_docs_defaults_to_non_breaking() {
-    let mut git = MockGit::new();
-    git.current_branch = "docs/readme".to_string();
-    let hosting = MockHosting::new();
-    let branch_type = BranchType::Docs { name: "readme".to_string() };
-
-    // No flag (None) — docs should NOT prompt, should default to non-breaking
-    finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, None, None, None, false).unwrap();
-
-    let calls = hosting.calls();
-    assert!(calls[1].ends_with(":docs: readme"),
-        "Docs with None should default to non-breaking, got: {}", calls[1]);
+        let calls = hosting.calls();
+        assert!(calls[1].starts_with(&format!("create_or_get_pr:{current}:")), "{case}: {calls:?}");
+        assert!(calls[1].ends_with(&format!(":{title}")), "{case}: {calls:?}");
+    }
 }
 
 #[test]
@@ -260,20 +208,6 @@ fn finish_work_branch_single_candidate_finishes_without_menu() {
     let calls = hosting.calls();
     assert!(calls[1].starts_with("create_or_get_pr:feature/login:develop:"),
         "Single candidate should be auto-selected, got: {}", calls[1]);
-}
-
-#[test]
-fn finish_work_branch_fix_breaking() {
-    let mut git = MockGit::new();
-    git.current_branch = "fix/auth".to_string();
-    let hosting = MockHosting::new();
-    let branch_type = BranchType::Fix { name: "auth".to_string() };
-
-    finish_work_branch(&git, &hosting, &MockPrompter::new(), &branch_type, Some(true), None, None, false).unwrap();
-
-    let calls = hosting.calls();
-    assert!(calls[1].ends_with(":fix!: auth"),
-        "Expected 'fix!: auth', got: {}", calls[1]);
 }
 
 #[test]
@@ -684,33 +618,21 @@ fn a_candidate_is_skipped_when_its_own_distance_cannot_be_counted() {
 // --- Breaking-change prompt (only when --breaking was omitted) ---
 
 #[test]
-fn omitted_breaking_flag_prompts_for_commonly_breaking_types() {
-    let mut git = MockGit::new();
-    git.current_branch = "feature/login".to_string();
-    git.remote_branches = vec!["develop".to_string()];
-    let hosting = MockHosting::new();
-    let prompter = MockPrompter::scripted(&[1]); // "yes"
-    let branch_type = BranchType::Feature { name: "login".to_string() };
+fn omitted_breaking_flag_uses_the_prompt_answer_in_the_title() {
+    for (answer, title) in [(1, "feat!: login"), (0, "feat: login")] {
+        let mut git = MockGit::new();
+        git.current_branch = "feature/login".to_string();
+        git.remote_branches = vec!["develop".to_string()];
+        let hosting = MockHosting::new();
+        let prompter = MockPrompter::scripted(&[answer]);
+        let branch_type = BranchType::Feature { name: "login".to_string() };
 
-    finish_work_branch(&git, &hosting, &prompter, &branch_type, None, None, None, false).unwrap();
+        finish_work_branch(&git, &hosting, &prompter, &branch_type, None, None, None, false)
+            .unwrap_or_else(|error| panic!("answer {answer}: {error}"));
 
-    assert_eq!(prompter.calls(), vec!["select:Contains breaking changes?:[no, yes]"]);
-    assert!(hosting.calls()[1].contains("feat!: login"),
-        "answering yes must mark the PR title breaking; got: {}", hosting.calls()[1]);
-}
-
-#[test]
-fn answering_no_to_the_breaking_prompt_leaves_the_title_plain() {
-    let mut git = MockGit::new();
-    git.current_branch = "feature/login".to_string();
-    git.remote_branches = vec!["develop".to_string()];
-    let hosting = MockHosting::new();
-    let prompter = MockPrompter::scripted(&[0]);
-    let branch_type = BranchType::Feature { name: "login".to_string() };
-
-    finish_work_branch(&git, &hosting, &prompter, &branch_type, None, None, None, false).unwrap();
-
-    assert!(hosting.calls()[1].contains("feat: login"), "got: {}", hosting.calls()[1]);
+        assert_eq!(prompter.calls(), vec!["select:Contains breaking changes?:[no, yes]"], "answer {answer}");
+        assert_eq!(hosting.calls()[1], format!("create_or_get_pr:feature/login:develop:{title}"), "answer {answer}");
+    }
 }
 
 // --- Branch-type guards on the fix finishes ---

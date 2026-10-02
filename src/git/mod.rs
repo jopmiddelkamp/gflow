@@ -198,6 +198,16 @@ impl<'a> GitCli<'a> {
         self.run(&["rev-parse", refname])
     }
 
+    fn main_worktree_root(&self) -> Result<String> {
+        // The first entry belongs to the main working tree, regardless of our cwd.
+        let output = self.run(&["worktree", "list", "--porcelain"])?;
+        output
+            .lines()
+            .find_map(|line| line.strip_prefix("worktree "))
+            .map(str::to_string)
+            .ok_or_else(|| "Could not determine the main working tree from 'git worktree list'.".to_string())
+    }
+
     /// Run a `git config --get`-style command that uses exit 1 to mean "key not set".
     /// Returns `Ok(None)` on exit 1, `Ok(Some(value))` on exit 0, and an error otherwise.
     fn run_config(&self, args: &[&str]) -> Result<Option<String>> {
@@ -373,14 +383,7 @@ impl Git for GitCli<'_> {
         }
     }
     fn repo_root(&self) -> Result<PathBuf> {
-        // `git worktree list` always lists the main working tree first, so this
-        // resolves the same root regardless of which worktree we run from.
-        let output = self.run(&["worktree", "list", "--porcelain"])?;
-        output
-            .lines()
-            .find_map(|l| l.strip_prefix("worktree "))
-            .map(PathBuf::from)
-            .ok_or_else(|| "Could not determine the main working tree from 'git worktree list'.".to_string())
+        self.main_worktree_root().map(PathBuf::from)
     }
     fn worktree_root(&self) -> Result<PathBuf> {
         self.run(&["rev-parse", "--show-toplevel"]).map(PathBuf::from)
@@ -424,9 +427,8 @@ impl Git for GitCli<'_> {
         // git refuses to remove the worktree it runs in, so run from the main
         // working tree via -C. `--force` is safe here: the finish preflight
         // already rejected dirty trees, so at most ignored files are deleted.
-        let main_root = self.repo_root()?;
-        let main_root = main_root.to_str().ok_or("Main working tree path is not valid UTF-8")?;
-        self.run(&["-C", main_root, "worktree", "remove", "--force", &own_root])?;
+        let main_root = self.main_worktree_root()?;
+        self.run(&["-C", &main_root, "worktree", "remove", "--force", &own_root])?;
         Ok(PathBuf::from(own_root))
     }
     fn head_sha(&self) -> Result<String> {

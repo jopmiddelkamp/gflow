@@ -67,7 +67,6 @@ pub trait HostingPlatform {
     fn copy_text(&self, text: &str) -> Result<()> {
         copy_to_clipboard(text)
     }
-    fn check_auth(&self) -> Result<()>;
 }
 
 /// Port for invoking a hosting CLI (`gh`, `az`, ...). The providers own the
@@ -88,13 +87,21 @@ impl CliRunner for SystemCli {
     fn run(&self, program: &str, args: &[&str]) -> Result<String> {
         use std::process::Command;
         let output = Command::new(program).args(args).output()
-            .map_err(|e| format!("Failed to run {program}: {e}"))?;
+            .map_err(|e| spawn_error(program, &e))?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             Err(format!("{program} {} failed: {stderr}", args.join(" ")))
         }
+    }
+}
+
+fn spawn_error(program: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!("'{program}' is not installed or not in PATH.")
+    } else {
+        format!("Failed to run {program}: {e}")
     }
 }
 
@@ -114,7 +121,22 @@ fn resolve_body_file(body: PrBody<'_>, native_paths: &[&str]) -> Option<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_body_file, PrBody};
+    use super::{resolve_body_file, spawn_error, PrBody};
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn a_missing_cli_names_itself_as_not_installed() {
+        let err = spawn_error("az", &Error::from(ErrorKind::NotFound));
+
+        assert_eq!(err, "'az' is not installed or not in PATH.");
+    }
+
+    #[test]
+    fn any_other_spawn_failure_keeps_the_os_reason() {
+        let err = spawn_error("gh", &Error::new(ErrorKind::PermissionDenied, "permission denied"));
+
+        assert_eq!(err, "Failed to run gh: permission denied");
+    }
 
     #[test]
     fn gflow_template_wins_over_native_paths() {
@@ -157,7 +179,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
             let mut child = Command::new(cmd[0]).args(&cmd[1..])
                 .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null())
                 .spawn().ok()?;
-            child.stdin.take()?.write_all(text.as_bytes()).ok()?;
+            child.stdin.take().and_then(|mut stdin| stdin.write_all(text.as_bytes()).ok())?;
             child.wait().ok()?.success().then_some(())
         })
         .ok_or_else(|| "no clipboard tool available".to_string())

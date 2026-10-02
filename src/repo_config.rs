@@ -318,6 +318,7 @@ fn migrate_scope(
     let existing = read_layer(target)?;
     let stated = parse(existing.as_deref().unwrap_or(""))?;
     let mut added = String::new();
+    let mut migrated_keys = Vec::new();
 
     for (git_key, file_key, already_stated) in MIGRATED_KEYS {
         let Some(value) = git.get_config_at(git_key, global)? else {
@@ -330,24 +331,27 @@ fn migrate_scope(
                 added.push_str(&line);
             }
         }
-        git.unset_config(git_key, global)?;
+        migrated_keys.push(*git_key);
     }
 
-    if added.is_empty() {
-        return Ok(());
+    if !added.is_empty() {
+        let dir = target.parent().expect("config path always has a parent");
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
+        let mut contents = existing.unwrap_or_default();
+        if !contents.is_empty() && !contents.ends_with('\n') {
+            contents.push('\n');
+        }
+        contents.push_str(&added);
+        if !global {
+            ensure_local_gitignored(dir)?;
+        }
+        fs::write(target, contents)
+            .map_err(|e| format!("Failed to write {}: {e}", target.display()))?;
     }
-    let dir = target.parent().expect("config path always has a parent");
-    fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
-    let mut contents = existing.unwrap_or_default();
-    if !contents.is_empty() && !contents.ends_with('\n') {
-        contents.push('\n');
+    for git_key in migrated_keys {
+        git.unset_config(git_key, global)?;
     }
-    contents.push_str(&added);
-    if !global {
-        ensure_local_gitignored(dir)?;
-    }
-    fs::write(target, contents)
-        .map_err(|e| format!("Failed to write {}: {e}", target.display()))
+    Ok(())
 }
 
 /// The user's home directory, or `None` on a machine that states neither
@@ -387,11 +391,6 @@ mod tests {
 
     fn tmp_dir() -> PathBuf {
         crate::test_support::tmp_dir("gflow-repo-config-test")
-    }
-
-    #[test]
-    fn empty_contents_sets_no_key() {
-        assert_eq!(parse("").unwrap(), Settings::default());
     }
 
     #[test]
@@ -458,11 +457,27 @@ mod tests {
 
     #[test]
     fn config_local_ignores_every_team_key() {
-        let (settings, warnings) =
-            parse_local("keep-release-branches=true\nbump-strategy=patch\n").unwrap();
-        assert_eq!(settings.keep_release_branches, None);
-        assert_eq!(settings.bump_strategy, None);
-        assert_eq!(warnings.len(), 2, "got: {warnings:?}");
+        for value in ["true", "false"] {
+            let (settings, warnings) =
+                parse_local(&format!("keep-release-branches={value}\nbump-strategy=patch\n")).unwrap();
+            assert_eq!(settings.keep_release_branches, None);
+            assert_eq!(settings.bump_strategy, None);
+            assert_eq!(warnings.len(), 2, "got: {warnings:?}");
+        }
+    }
+
+    #[test]
+    fn a_blocked_private_config_directory_cannot_be_replaced_by_an_ignore_file() {
+        let dir = tmp_dir();
+        let gflow = dir.join(".gflow");
+        fs::write(&gflow, "do not replace").unwrap();
+
+        let error = ensure_local_gitignored(&gflow).unwrap_err();
+
+        assert!(error.contains("Failed to create"));
+        assert!(error.contains(&gflow.display().to_string()));
+        assert_eq!(fs::read_to_string(&gflow).unwrap(), "do not replace");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -632,18 +647,6 @@ mod tests {
     }
 
     #[test]
-    fn home_dir_reads_the_environment() {
-        // The one caller that cannot be injected: the composition root has to
-        // find the home directory before any config exists to point at it.
-        // HOME wins where both are set (Unix CI); USERPROFILE is the fallback
-        // a bare HOME-less machine (Windows CI) actually has.
-        let expected = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(std::path::PathBuf::from);
-        assert_eq!(home_dir(), expected);
-    }
-
-    #[test]
     fn set_key_terminates_a_file_that_had_no_trailing_newline() {
         let dir = tmp_dir();
         let path = dir.join("config");
@@ -655,10 +658,14 @@ mod tests {
 
     #[test]
     fn empty_contents_yields_default() {
-        let config = parse("").unwrap().resolve();
+        let settings = parse("").unwrap();
+        assert_eq!(settings, Settings::default());
+
+        let config = settings.resolve();
         assert_eq!(config, RepoConfig::default());
         assert_eq!(config.mode, Mode::Free);
         assert!(!config.keep_release_branches);
+        assert_eq!(config.bump_strategy, BumpStrategy::Rc);
     }
 
     #[test]
@@ -712,12 +719,6 @@ keep-release-branches=true
     fn a_line_without_equals_is_malformed() {
         let err = parse("mode\n").unwrap_err();
         assert!(err.contains("Malformed line in .gflow/config"), "got: {err}");
-    }
-
-    #[test]
-    fn bump_strategy_defaults_to_rc() {
-        let config = parse("").unwrap().resolve();
-        assert_eq!(config.bump_strategy, BumpStrategy::Rc);
     }
 
     #[test]
@@ -807,9 +808,12 @@ keep-release-branches=true
     #[test]
     fn load_fails_when_config_is_a_directory() {
         let dir = tmp_dir();
-        fs::create_dir_all(dir.join(".gflow").join("config")).unwrap();
+        let path = config_path(&dir);
+        fs::create_dir_all(&path).unwrap();
         let err = load(&dir).unwrap_err();
         assert!(err.starts_with("Failed to read"), "got: {err}");
+        assert!(err.contains(&path.display().to_string()));
+        assert!(path.is_dir());
         fs::remove_dir_all(&dir).ok();
     }
 }

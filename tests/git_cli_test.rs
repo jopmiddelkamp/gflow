@@ -14,8 +14,7 @@ use gflow::git::{Git, GitCli};
 //   * the flags each primitive passes (`merge --no-ff`, `stash push -u`,
 //     `branch -D`), pinned as one table at the bottom of this file
 //
-// The process spawn itself (`SystemRunner`) stays untested by design: tests
-// never touch real git (SKILL.md principle 9).
+// Process fixtures cover `SystemRunner` separately without touching real git.
 
 fn git(runner: &MockCommandRunner) -> GitCli<'_> {
     GitCli::new(runner)
@@ -347,7 +346,8 @@ fn removing_the_current_worktree_runs_from_the_main_working_tree() {
 #[test]
 fn a_stash_is_found_by_its_message_and_returns_its_ref() {
     let runner = MockCommandRunner::ok(
-        "stash@{0} On develop: someone else's work\n\
+        "malformed\n\
+         stash@{0} On develop: someone else's work\n\
          stash@{1} On develop: gflow-finish:release/2.5.0:1700000000\n");
 
     let found = git(&runner).find_stash_by_message("gflow-finish:release/2.5.0:1700000000").unwrap();
@@ -506,18 +506,4 @@ fn worktree_of_is_none_when_no_tree_holds_the_branch() {
          worktree /repos/app-fix\nHEAD def\ndetached\n");
 
     assert_eq!(git(&runner).worktree_of("main").unwrap(), None);
-}
-
-#[test]
-fn find_stash_by_message_returns_the_matching_ref() {
-    // The stash-pop path never pops blind: the ref comes from matching the
-    // gflow-written message in `git stash list`.
-    let runner = MockCommandRunner::ok(
-        "stash@{0} On develop: WIP unrelated\n\
-         stash@{1} On release/1.1.0: gflow-finish:release/1.1.0:123\n");
-
-    assert_eq!(
-        git(&runner).find_stash_by_message("gflow-finish:release/1.1.0:123").unwrap(),
-        Some("stash@{1}".to_string())
-    );
 }

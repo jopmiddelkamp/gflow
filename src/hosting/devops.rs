@@ -1,15 +1,20 @@
+use std::cell::Cell;
+
 use super::{resolve_body_file, CliRunner, HostingPlatform, LandedPr, MergedPr, PrBody, Result};
+
+const AUTH_REMEDY: &str = "If you are not signed in, run 'az login' (or 'az devops login' with a PAT), then re-run gflow.";
 
 pub struct AzureDevOps<'a> {
     org: String,
     project: String,
     repo: String,
     runner: &'a dyn CliRunner,
+    extension_verified: Cell<bool>,
 }
 
 impl<'a> AzureDevOps<'a> {
     pub fn new(org: String, project: String, repo: String, runner: &'a dyn CliRunner) -> Self {
-        Self { org, project, repo, runner }
+        Self { org, project, repo, runner, extension_verified: Cell::new(false) }
     }
 
     fn org_url(&self) -> String {
@@ -30,8 +35,21 @@ impl<'a> AzureDevOps<'a> {
     }
 
     fn run_az(&self, args: &[String]) -> Result<String> {
+        self.verify_extension()?;
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        self.runner.run("az", &args)
+        self.runner.run("az", &args).map_err(|e| format!("{e}\n{AUTH_REMEDY}"))
+    }
+
+    /// Without the extension, az meets a repos command with an interactive
+    /// install prompt that the captured output hides — gflow would hang.
+    fn verify_extension(&self) -> Result<()> {
+        if self.extension_verified.get() {
+            return Ok(());
+        }
+        self.runner.run("az", &["extension", "show", "--name", "azure-devops"])
+            .map_err(|e| format!("{e}\nThe Azure DevOps CLI extension is required. Run 'az extension add --name azure-devops'."))?;
+        self.extension_verified.set(true);
+        Ok(())
     }
 
     fn repo_args(&self) -> Vec<String> {
@@ -228,20 +246,6 @@ impl HostingPlatform for AzureDevOps<'_> {
         let id = id.trim();
         Ok(if id.is_empty() { None } else { Some(self.pr_url(validate_pr_id(id)?)) })
     }
-
-    fn check_auth(&self) -> Result<()> {
-        // Explicit extension check first: it also prevents az's interactive
-        // dynamic-install prompt from firing inside a non-tty command later.
-        self.run_az(&["extension".into(), "show".into(), "--name".into(), "azure-devops".into()])
-            .map_err(|e| format!("Azure DevOps CLI extension is missing. Run 'az extension add --name azure-devops'.\n{e}"))?;
-        // Probe actual repo access rather than `az account show`: PAT auth via
-        // `az devops login` (or AZURE_DEVOPS_EXT_PAT) works without an `az login`
-        // session, which `account show` would wrongly report as unauthenticated.
-        let mut args: Vec<String> = vec!["repos".into(), "show".into()];
-        args.extend(self.repo_args());
-        args.extend(["--query".into(), "id".into(), "-o".into(), "tsv".into()]);
-        self.run_az(&args).map(|_| ())
-    }
 }
 
 #[cfg(test)]
@@ -290,6 +294,18 @@ mod tests {
 
     fn ado() -> AzureDevOps<'static> {
         AzureDevOps::new("beans".into(), "Shop".into(), "shop".into(), &SystemCli)
+    }
+
+    #[test]
+    fn malformed_merged_rows_never_authorize_cleanup() {
+        for row in ["completed", "completed\tabc\tdeadbeef\t49\textra\tfield"] {
+            let error = ado().parse_merged_pr_row(row).unwrap_err();
+            assert!(error.contains("Unexpected merged-PR data from az:"));
+            assert!(error.contains(row));
+            let error = ado().parse_landed_pr_row(row).unwrap_err();
+            assert!(error.contains("Unexpected merged-PR data from az:"));
+            assert!(error.contains(row));
+        }
     }
 
     #[test]

@@ -245,6 +245,8 @@ mod tests {
         assert_eq!(parse_remote("git@ssh.dev.azure.com:v4/beans/Shop/backend"), None, "wrong ssh version segment");
         assert_eq!(parse_remote("https://beans.visualstudio.com/Shop"), None, "legacy without _git/repo");
         assert_eq!(parse_remote("https://beans.visualstudio.com/Shop/_git"), None, "legacy without repo");
+        assert_eq!(parse_remote("git@ssh.dev.azure.com"), None);
+        assert_eq!(parse_remote("https://dev.azure.com"), None);
     }
 
     #[test]

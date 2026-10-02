@@ -108,27 +108,14 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     )
 }
 
-/// Detect the hosting provider for this repo and return a ready-to-use,
-/// preflighted (CLI installed + authenticated) hosting backend.
+/// Detect the hosting provider for this repo. No up-front CLI or auth check:
+/// `az` alone takes seconds to answer one, and every flow is rerun-safe, so a
+/// missing CLI or expired login surfaces on the first real call instead.
 fn create_hosting(git: &dyn Git) -> Result<Box<dyn HostingPlatform>, String> {
-    match detect::detect(git)? {
-        Provider::GitHub => {
-            check_command_exists("gh")?;
-            let hosting = GitHub::new(&SystemCli);
-            hosting.check_auth().map_err(|e| {
-                format!("GitHub CLI is not authenticated. Run 'gh auth login' first.\n{e}")
-            })?;
-            Ok(Box::new(hosting))
-        }
-        Provider::AzureDevOps { org, project, repo } => {
-            check_command_exists("az")?;
-            let hosting = AzureDevOps::new(org, project, repo, &SystemCli);
-            hosting.check_auth().map_err(|e| {
-                format!("Azure CLI is not ready for Azure DevOps. Run 'az login' (or 'az devops login' with a PAT).\n{e}")
-            })?;
-            Ok(Box::new(hosting))
-        }
-    }
+    Ok(match detect::detect(git)? {
+        Provider::GitHub => Box::new(GitHub::new(&SystemCli)),
+        Provider::AzureDevOps { org, project, repo } => Box::new(AzureDevOps::new(org, project, repo, &SystemCli)),
+    })
 }
 
 fn check_command_exists(cmd: &str) -> Result<(), String> {

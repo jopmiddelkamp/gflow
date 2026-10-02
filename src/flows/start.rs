@@ -515,6 +515,13 @@ mod tests {
     }
 
     #[test]
+    fn an_unstructured_subject_only_breaks_when_the_footer_says_so() {
+        assert!(!message_is_breaking(""));
+        assert!(!message_is_breaking("update documentation!"));
+        assert!(message_is_breaking("remove old behavior\n\nBREAKING CHANGE: old input is rejected"));
+    }
+
+    #[test]
     fn bang_in_body_does_not_count() {
         // The ! must be in the title before the colon, not in the body
         let msg = "feat: add feature\n\nThis is great!\nReally awesome.";

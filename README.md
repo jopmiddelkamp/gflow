@@ -391,6 +391,7 @@ plain `key=value` files you can also edit by hand — see
 > automatically on the first run — global keys to `~/.gflow/config`, `--local` keys to that
 > repository's `.gflow/config.local`. Local git config was never committed, so it stays
 > uncommitted. Nothing to do by hand, and nothing appears in `git status`.
+> Migration saves the new file before removing old keys. A failed save keeps your old settings.
 
 One other key lives outside this family and is **repo-local**, because the
 mainline is a property of the repository rather than a per-developer preference:
@@ -984,19 +985,16 @@ testable without those CLIs installed.
 
 gflow is developed test-first (TDD) with a coverage ratchet:
 
-- `cargo test` — runs the full suite. All tests run against mocks; none touch real git, the network, or installed CLIs.
-- `cargo llvm-cov --summary-only` — line-coverage report (`brew install cargo-llvm-cov`).
+- `cargo test` — runs the full suite. Flow tests use mocks. Process tests use temporary fake tools and isolated terminals.
+- `cargo llvm-cov --summary-only --fail-under-lines 100 --fail-under-functions 100 --fail-under-regions 100` — strict coverage check (`brew install cargo-llvm-cov`).
 - Coverage may never decrease: `.claude/hooks/coverage-baseline.txt` records the high-water mark and `.claude/hooks/tdd-gate.sh` enforces it (wired as a Claude Code Stop hook).
 
-Line coverage sits near 89%. What remains uncovered is there by design — the
-process and terminal shell that tests must never touch:
-
-| Exempt | Why |
-|---|---|
-| `main.rs` | Composition root; building the real adapters needs `git`/`gh`/`az` installed |
-| `menu.rs` raw-mode rendering and key loop | Requires a TTY (the branch-type gating and input shaping around it *are* tested) |
-| `SystemRunner`, `SystemCli`, `CommandEditor` | The process spawns themselves |
-| A handful of `unreachable!` arms | Uncoverable by construction — they mark invariants the compiler cannot express |
+Line, function, and region coverage reach 100% on macOS. The coverage gate checks exact counts for all three.
+Its cache tracks untracked Rust contents, the lockfile, gate policy, and baseline changes.
+Coverage includes startup, process adapters, terminal rendering, input, and error handling.
+Process fixtures use private directories and environment variables. Terminal tests allocate their own terminal.
+Tests do not use your repositories, hosting accounts, browser, clipboard, or terminal.
+Unix process and terminal tests run on macOS and Linux. Portable mock tests also run on Windows.
 
 ## License
 

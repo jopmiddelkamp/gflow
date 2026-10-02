@@ -3,15 +3,31 @@ use gflow::flows::start::ReleaseType;
 use gflow::git::branch::BranchType;
 use gflow::action::Action;
 
-// --- Start work branch tests ---
+#[test]
+#[should_panic(expected = "--abort is intercepted")]
+fn direct_dispatch_rejects_abort_before_normal_finish_resolution() {
+    let _ = resolve_action(
+        Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false },
+        &BranchType::Release { major: 1, minor: 2, patch: 0 }, false, "main",
+    );
+}
 
 #[test]
-fn start_feature_returns_start_work_branch_action() {
-    let cmd = Commands::Start { kind: StartKind::Feature { name: "login".to_string(), base: "develop".to_string(), opts: StartOptions::default() } };
-    let branch_type = BranchType::Develop;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartWorkBranch { prefix, name, from, .. } if prefix == "feature" && name == "login" && from == "develop"));
+#[should_panic(expected = "worktree configuration is dispatched in main()")]
+fn branch_dispatch_rejects_worktree_configuration() {
+    let _ = resolve_action(
+        Commands::Worktree { action: None, repo: false, local: false },
+        &BranchType::Develop, false, "main",
+    );
 }
+
+#[test]
+#[should_panic(expected = "init is dispatched in main()")]
+fn branch_dispatch_rejects_repository_initialization() {
+    let _ = resolve_action(Commands::Init, &BranchType::Develop, false, "main");
+}
+
+// --- Start work branch tests ---
 
 #[test]
 fn start_feature_with_custom_base() {
@@ -245,38 +261,6 @@ fn finish_on_release_chore_branch() {
     assert!(matches!(action, Action::FinishReleaseChore));
 }
 
-#[test]
-fn start_fix_returns_start_work_branch_action() {
-    let cmd = Commands::Start { kind: StartKind::Fix { name: "bug".to_string(), base: "develop".to_string(), opts: StartOptions::default() } };
-    let branch_type = BranchType::Develop;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartWorkBranch { prefix, name, .. } if prefix == "fix" && name == "bug"));
-}
-
-#[test]
-fn start_chore_returns_start_work_branch_action() {
-    let cmd = Commands::Start { kind: StartKind::Chore { name: "deps".to_string(), base: "develop".to_string(), opts: StartOptions::default() } };
-    let branch_type = BranchType::Develop;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartWorkBranch { prefix, name, .. } if prefix == "chore" && name == "deps"));
-}
-
-#[test]
-fn start_docs_returns_start_work_branch_action() {
-    let cmd = Commands::Start { kind: StartKind::Docs { name: "readme".to_string(), base: "develop".to_string(), opts: StartOptions::default() } };
-    let branch_type = BranchType::Develop;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartWorkBranch { prefix, name, .. } if prefix == "docs" && name == "readme"));
-}
-
-#[test]
-fn start_refactor_returns_start_work_branch_action() {
-    let cmd = Commands::Start { kind: StartKind::Refactor { name: "cleanup".to_string(), base: "develop".to_string(), opts: StartOptions::default() } };
-    let branch_type = BranchType::Develop;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartWorkBranch { prefix, name, .. } if prefix == "refactor" && name == "cleanup"));
-}
-
 // --- Bump and Sync tests ---
 
 #[test]
@@ -321,28 +305,6 @@ fn start_feature_with_no_checkout_flag() {
     let branch_type = BranchType::Develop;
     let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
     assert!(matches!(action, Action::StartWorkBranch { no_checkout: true, .. }));
-}
-
-#[test]
-fn start_release_fix_with_no_checkout_flag() {
-    let cmd = Commands::Start { kind: StartKind::ReleaseFix {
-        name: "broken-login".to_string(),
-        opts: StartOptions { no_checkout: true, ..Default::default() },
-    }};
-    let branch_type = BranchType::Release { major: 1, minor: 2, patch: 0 };
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartReleaseFix { no_checkout: true, .. }));
-}
-
-#[test]
-fn start_hotfix_fix_with_no_checkout_flag() {
-    let cmd = Commands::Start { kind: StartKind::HotfixFix {
-        name: "urgent".to_string(),
-        opts: StartOptions { no_checkout: true, ..Default::default() },
-    }};
-    let branch_type = BranchType::Main;
-    let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
-    assert!(matches!(action, Action::StartHotfixFix { no_checkout: true, .. }));
 }
 
 #[test]

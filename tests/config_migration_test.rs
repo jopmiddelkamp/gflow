@@ -28,21 +28,9 @@ fn a_global_worktree_setting_moves_into_the_global_config_file() {
     assert_eq!(settings.worktree, Some(true));
     assert_eq!(settings.editor.as_deref(), Some("cursor"));
     assert_eq!(settings.path.as_deref(), Some("~/wt"));
-}
-
-#[test]
-fn migrated_global_keys_are_unset_so_the_migration_never_runs_twice() {
-    let home = tmp_dir("gflow-migrate-home");
-    let mut git = MockGit::new();
-    git.config_global.insert("gflow.worktree.enabled".into(), "true".into());
-
-    repo_config::migrate_git_config(&git, Some(&home), None).unwrap();
-
-    assert!(
-        git.calls().contains(&"unset_config:global:gflow.worktree.enabled".to_string()),
-        "got: {:?}",
-        git.calls()
-    );
+    for key in ["enabled", "editor", "path"] {
+        assert!(git.calls().contains(&format!("unset_config:global:gflow.worktree.{key}")));
+    }
 }
 
 #[test]

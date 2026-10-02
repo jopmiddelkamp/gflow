@@ -129,6 +129,8 @@ gflow sync [--accept-merge-type] # merge release into develop (on release/* only
 
 ### Landing modes & version script
 
+Config migration saves the replacement file before removing old Git keys. A failed save preserves those keys for retry.
+
 Config is three layers, later overriding earlier per key: `~/.gflow/config` (you, all repos; written by `gflow worktree ...`) → `<repo>/.gflow/config` (this repo, committed; `--repo`) → `<repo>/.gflow/config.local` (you, this repo, gitignored; `--local`). A silent layer never undoes a lower one. Layers 1-2 take every key; layer 3 takes only `worktree`/`editor`/`path` — team keys there are warned about and ignored, so nobody can privately opt out of `mode=protected`. gflow maintains `<repo>/.gflow/.gitignore` itself (self-ignoring, so it is never untracked noise) and never edits the repo's own `.gitignore`. 4.0.x `gflow.worktree.*` git config migrates automatically on first run, per scope (global → `~/.gflow/config`, `--local` → `config.local`, which stays uncommitted as it always was); only the detection caches `gflow.branch.main` and `gflow.hosting.provider` stay in git config.
 
 `.gflow/config` (committed file, not git config — repo policy, not per-clone): `mode=free|protected` (default `free` = today's behavior), `keep-release-branches=true|false` (default `false`; skips deleting `release/*`/`hotfix/*` on finish, work branches unaffected), `bump-strategy=rc|patch` (default `rc`; see Tag Strategy).
@@ -215,7 +217,7 @@ Not available for `start release`.
 
 ## Prerequisites
 
-gflow runs preflight checks automatically:
+gflow checks `git` at startup; `gh`/`az` and their login are checked on first use (a failure names the fix — re-run after fixing):
 - `git` must be installed
 - The hosting provider is auto-detected from the origin remote URL (`dev.azure.com` / `*.visualstudio.com` → Azure DevOps, else GitHub); override with `git config gflow.hosting.provider github|devops`
 - GitHub repos: `gh` installed + `gh auth login` completed

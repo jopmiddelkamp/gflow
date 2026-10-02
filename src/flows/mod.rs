@@ -662,6 +662,728 @@ pub(crate) fn resume_hint(source_branch: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mocks::{MockGit, MockHosting};
+
+    fn assert_each_git_failure(
+        calls: &[&str],
+        setup: impl Fn() -> MockGit,
+        run: impl Fn(&MockGit) -> Result<(), String>,
+    ) {
+        for (index, call) in calls.iter().enumerate() {
+            let mut git = setup();
+            let occurrence = calls[..=index].iter().filter(|seen| *seen == call).count();
+            git.fail_call = Some(((*call).into(), occurrence));
+            let error = run(&git).unwrap_err();
+            assert!(
+                error.starts_with(&format!("injected git failure: {call}")),
+                "{call}: {error}"
+            );
+            assert_eq!(git.calls(), calls[..=index], "failed step: {call}");
+        }
+    }
+
+    fn landed_pr_fixture() -> LandedPr {
+        LandedPr {
+            url: "https://example.com/pr/1".into(),
+            head_sha: "old-head".into(),
+            merge_commit_sha: "merged".into(),
+        }
+    }
+
+    #[test]
+    fn failed_merge_checks_stop_before_mutating_the_target() {
+        assert_each_git_failure(
+            &[
+                "is_ancestor:source:main",
+                "worktree_of:main",
+                "checkout:main",
+                "ff_merge:origin/main",
+                "merge:source:merge source",
+            ],
+            MockGit::new,
+            |git| {
+                merge_into(
+                    git,
+                    "source",
+                    "main",
+                    "merge source",
+                    "resolve before retrying",
+                )
+            },
+        );
+        assert_each_git_failure(
+            &[
+                "is_ancestor:source:main",
+                "worktree_of:main",
+                "is_working_tree_clean_at:/other-tree",
+                "ff_merge_at:/other-tree:origin/main",
+                "merge_at:/other-tree:source:merge source",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.worktrees.insert("main".into(), "/other-tree".into());
+                git
+            },
+            |git| {
+                merge_into(
+                    git,
+                    "source",
+                    "main",
+                    "merge source",
+                    "resolve before retrying",
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn idempotent_push_and_tag_guards_propagate_failed_reads() {
+        assert_each_git_failure(&["is_pushed:source", "push:source"], MockGit::new, |git| {
+            push_if_needed(git, "source")
+        });
+        assert_each_git_failure(
+            &["tag_exists:v1.0.0", "create_tag:v1.0.0:release"],
+            MockGit::new,
+            |git| tag_if_missing(git, "v1.0.0", "release"),
+        );
+        assert_each_git_failure(
+            &["remote_tag_exists:v1.0.0", "push_tag:v1.0.0"],
+            MockGit::new,
+            |git| push_tag_if_missing(git, "v1.0.0"),
+        );
+        assert_each_git_failure(
+            &["tag_exists:v1.0.0", "create_tag_at:v1.0.0:release:merged"],
+            MockGit::new,
+            |git| tag_at_if_missing(git, "v1.0.0", "release", "merged"),
+        );
+        assert_each_git_failure(
+            &["tag_exists:v1.0.0", "tag_commit_sha:v1.0.0"],
+            || {
+                let mut git = MockGit::new();
+                git.existing_tags.insert("v1.0.0".into());
+                git
+            },
+            |git| tag_at_if_missing(git, "v1.0.0", "release", "merged"),
+        );
+    }
+
+    #[test]
+    fn origin_reconciliation_stops_when_remote_state_cannot_be_proved() {
+        assert_each_git_failure(
+            &["remote_branch_exists:source", "push:source"],
+            MockGit::new,
+            |git| reconcile_with_origin(git, "source"),
+        );
+        assert_each_git_failure(
+            &[
+                "remote_branch_exists:source",
+                "is_pushed:source",
+                "is_ancestor:origin/source:source",
+                "push:source",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.existing_remote_branches.insert("source".into());
+                git.ancestors
+                    .insert(("origin/source".into(), "source".into()));
+                git
+            },
+            |git| reconcile_with_origin(git, "source"),
+        );
+        assert_each_git_failure(
+            &[
+                "remote_branch_exists:source",
+                "is_pushed:source",
+                "is_ancestor:origin/source:source",
+                "is_ancestor:source:origin/source",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.existing_remote_branches.insert("source".into());
+                git
+            },
+            |git| reconcile_with_origin(git, "source"),
+        );
+    }
+
+    #[test]
+    fn landing_lookups_propagate_hosting_errors_without_git_mutations() {
+        for call in [
+            "open_pr_to:source:main",
+            "merged_pr_to:finish/source-into-main:main",
+            "merged_pr_to:source:main",
+        ] {
+            let git = MockGit::new();
+            let mut hosting = MockHosting::new();
+            hosting.fail_call = Some((call.into(), 1));
+            let result = land_leg_strict(
+                &git,
+                &hosting,
+                "source",
+                "main",
+                "land source",
+                None,
+                "gflow finish",
+                false,
+            );
+            assert_eq!(
+                result.err(),
+                Some(format!("injected hosting failure: {call}"))
+            );
+            assert_eq!(hosting.calls().last().map(String::as_str), Some(call));
+            assert!(git.calls().is_empty());
+        }
+    }
+
+    #[test]
+    fn strict_landing_lookup_requires_readable_merge_and_tip_evidence() {
+        let mut hosting = MockHosting::new();
+        hosting.merged_prs_to.insert(
+            ("finish/source-into-main".into(), "main".into()),
+            landed_pr_fixture(),
+        );
+        for remote in [false, true] {
+            let calls: &[&str] = if remote {
+                &[
+                    "is_ancestor:merged:origin/main",
+                    "commit_parent_count:merged",
+                    "branch_sha:source",
+                    "remote_branch_exists:finish/source-into-main",
+                    "is_ancestor:source:origin/finish/source-into-main",
+                    "local_branch_exists:finish/source-into-main",
+                    "is_ancestor:source:finish/source-into-main",
+                ]
+            } else {
+                &[
+                    "is_ancestor:merged:origin/main",
+                    "commit_parent_count:merged",
+                    "branch_sha:source",
+                    "remote_branch_exists:finish/source-into-main",
+                    "local_branch_exists:finish/source-into-main",
+                    "is_ancestor:source:finish/source-into-main",
+                ]
+            };
+            assert_each_git_failure(
+                calls,
+                || {
+                    let mut git = MockGit::new();
+                    git.ancestors
+                        .insert(("merged".into(), "origin/main".into()));
+                    git.parent_counts.insert("merged".into(), 2);
+                    git.existing_local_branches
+                        .insert("finish/source-into-main".into());
+                    if remote {
+                        git.existing_remote_branches
+                            .insert("finish/source-into-main".into());
+                    }
+                    git
+                },
+                |git| finish_leg_landed_strict(git, &hosting, "source", "main", false).map(|_| ()),
+            );
+        }
+    }
+
+    #[test]
+    fn finish_branch_creation_stops_at_failed_reads_and_writes() {
+        assert_each_git_failure(
+            &[
+                "remote_branch_exists:source",
+                "push:source",
+                "remote_branch_exists:finish/source-into-main",
+                "local_branch_exists:finish/source-into-main",
+                "create_branch_no_checkout:finish/source-into-main:source",
+                "is_ancestor:source:finish/source-into-main",
+                "is_ancestor:origin/main:finish/source-into-main",
+                "current_branch",
+                "checkout:finish/source-into-main",
+                "merge:origin/main:chore: merge main into finish/source-into-main",
+                "checkout:develop",
+                "push:finish/source-into-main",
+            ],
+            MockGit::new,
+            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+        );
+    }
+
+    #[test]
+    fn finish_branch_remote_reuse_stops_before_overwriting_unreadable_history() {
+        assert_each_git_failure(
+            &[
+                "remote_branch_exists:source",
+                "push:source",
+                "remote_branch_exists:finish/source-into-main",
+                "is_ancestor:source:origin/finish/source-into-main",
+                "local_branch_exists:finish/source-into-main",
+                "create_branch_no_checkout:finish/source-into-main:origin/finish/source-into-main",
+                "is_ancestor:source:finish/source-into-main",
+                "current_branch",
+                "checkout:finish/source-into-main",
+                "ff_merge:origin/finish/source-into-main",
+                "merge:source:chore: refresh finish/source-into-main with source",
+                "checkout:develop",
+                "is_ancestor:origin/main:finish/source-into-main",
+                "current_branch",
+                "checkout:finish/source-into-main",
+                "merge:origin/main:chore: merge main into finish/source-into-main",
+                "checkout:develop",
+                "push:finish/source-into-main",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.existing_remote_branches
+                    .insert("finish/source-into-main".into());
+                git
+            },
+            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+        );
+        assert_each_git_failure(
+            &[
+                "remote_branch_exists:source",
+                "push:source",
+                "remote_branch_exists:finish/source-into-main",
+                "is_ancestor:source:origin/finish/source-into-main",
+                "is_ancestor:origin/main:origin/finish/source-into-main",
+                "local_branch_exists:finish/source-into-main",
+                "is_ancestor:source:finish/source-into-main",
+                "is_ancestor:origin/finish/source-into-main:finish/source-into-main",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.existing_remote_branches
+                    .insert("finish/source-into-main".into());
+                git.existing_local_branches
+                    .insert("finish/source-into-main".into());
+                git.ancestors
+                    .insert(("source".into(), "origin/finish/source-into-main".into()));
+                git.ancestors
+                    .insert(("source".into(), "finish/source-into-main".into()));
+                git
+            },
+            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+        );
+    }
+
+    #[test]
+    fn landing_does_not_open_a_pr_after_failed_containment_or_branch_preparation() {
+        for call in [
+            "is_ancestor:source:origin/main",
+            "remote_branch_exists:source",
+        ] {
+            let mut git = MockGit::new();
+            git.fail_call = Some((call.into(), 1));
+            let hosting = MockHosting::new();
+            let result = land_leg_strict(
+                &git,
+                &hosting,
+                "source",
+                "main",
+                "land source",
+                None,
+                "gflow finish",
+                false,
+            );
+            assert_eq!(result.err(), Some(format!("injected git failure: {call}")));
+            assert_eq!(git.calls().last().map(String::as_str), Some(call));
+            assert!(!hosting
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("create_or_get_pr:")));
+        }
+        let git = MockGit::new();
+        let mut hosting = MockHosting::new();
+        let call = "create_or_get_pr:finish/source-into-main:main:land source:empty-body";
+        hosting.fail_call = Some((call.into(), 1));
+        let result = land_leg_strict(
+            &git,
+            &hosting,
+            "source",
+            "main",
+            "land source",
+            None,
+            "gflow finish",
+            false,
+        );
+        assert_eq!(
+            result.err(),
+            Some(format!("injected hosting failure: {call}"))
+        );
+        assert_eq!(hosting.calls().last().map(String::as_str), Some(call));
+        assert_eq!(
+            git.calls().last().map(String::as_str),
+            Some("push:finish/source-into-main")
+        );
+    }
+
+    #[test]
+    fn finish_branch_cleanup_stops_at_the_first_failed_delete() {
+        assert_each_git_failure(
+            &[
+                "list_branches_matching:finish/source-into-*",
+                "local_branch_exists:finish/source-into-main",
+                "delete_branch_local:finish/source-into-main",
+                "remote_branch_exists:finish/source-into-main",
+                "delete_branch_remote:finish/source-into-main",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.branches_matching = vec![
+                    "finish/source-into-main".into(),
+                    "finish/source-into-develop".into(),
+                ];
+                git.existing_local_branches
+                    .insert("finish/source-into-main".into());
+                git.existing_remote_branches
+                    .insert("finish/source-into-main".into());
+                git
+            },
+            |git| cleanup_finish_branches(git, "source"),
+        );
+    }
+
+    #[test]
+    fn source_cleanup_errors_preserve_all_remaining_resources() {
+        for (current, linked, main_occupied, calls) in [
+            (
+                "develop",
+                false,
+                false,
+                vec![
+                    "current_branch",
+                    "local_branch_exists:source",
+                    "delete_branch_local:source",
+                    "remote_branch_exists:source",
+                    "delete_branch_remote:source",
+                ],
+            ),
+            (
+                "source",
+                true,
+                false,
+                vec![
+                    "current_branch",
+                    "is_linked_worktree",
+                    "detach_head",
+                    "local_branch_exists:source",
+                    "delete_branch_local:source",
+                    "remote_branch_exists:source",
+                    "delete_branch_remote:source",
+                    "remove_current_worktree",
+                ],
+            ),
+            (
+                "source",
+                false,
+                false,
+                vec![
+                    "current_branch",
+                    "is_linked_worktree",
+                    "worktree_of:main",
+                    "checkout:main",
+                    "local_branch_exists:source",
+                    "delete_branch_local:source",
+                    "remote_branch_exists:source",
+                    "delete_branch_remote:source",
+                ],
+            ),
+            (
+                "source",
+                false,
+                true,
+                vec![
+                    "current_branch",
+                    "is_linked_worktree",
+                    "worktree_of:main",
+                    "detach_head",
+                    "local_branch_exists:source",
+                    "delete_branch_local:source",
+                    "remote_branch_exists:source",
+                    "delete_branch_remote:source",
+                ],
+            ),
+        ] {
+            assert_each_git_failure(
+                &calls,
+                || {
+                    let mut git = MockGit::new();
+                    git.current_branch = current.into();
+                    git.linked_worktree = linked;
+                    if main_occupied {
+                        git.worktrees.insert("main".into(), "/main-tree".into());
+                    }
+                    git.existing_local_branches.insert("source".into());
+                    git.existing_remote_branches.insert("source".into());
+                    git
+                },
+                |git| delete_source_branch(git, "source", "main").map(|_| ()),
+            );
+        }
+    }
+
+    #[test]
+    fn tip_landing_checks_propagate_missing_evidence_before_authorizing_cleanup() {
+        assert_each_git_failure(
+            &[
+                "branch_sha:source",
+                "remote_branch_exists:finish/source-into-main",
+                "is_ancestor:source:origin/finish/source-into-main",
+                "local_branch_exists:finish/source-into-main",
+                "is_ancestor:source:finish/source-into-main",
+            ],
+            || {
+                let mut git = MockGit::new();
+                git.existing_local_branches
+                    .insert("finish/source-into-main".into());
+                git.existing_remote_branches
+                    .insert("finish/source-into-main".into());
+                git
+            },
+            |git| {
+                tip_landed_somewhere(
+                    git,
+                    "source",
+                    &[landed_pr_fixture()],
+                    &["finish/source-into-main".into()],
+                )
+                .map(|_| ())
+            },
+        );
+    }
+
+    #[test]
+    fn post_landing_report_propagates_unreadable_history() {
+        assert_each_git_failure(
+            &["branch_sha:source", "rev_list_count:old-head:source"],
+            MockGit::new,
+            |git| {
+                report_commits_past_landing(git, "source", &landed_pr_fixture(), "main", "v1.0.0")
+            },
+        );
+        let mut git = MockGit::new();
+        git.rev_list_count_result = 2;
+        report_commits_past_landing(&git, "source", &landed_pr_fixture(), "main", "v1.0.0")
+            .unwrap();
+        assert_eq!(
+            git.calls(),
+            ["branch_sha:source", "rev_list_count:old-head:source"]
+        );
+    }
+
+    #[test]
+    fn post_landing_report_counts_only_commits_after_the_landed_head() {
+        for (tip, count, calls) in [
+            ("old-head", 99, vec!["branch_sha:source"]),
+            ("new-head", 0, vec!["branch_sha:source", "rev_list_count:old-head:source"]),
+            ("new-head", 1, vec!["branch_sha:source", "rev_list_count:old-head:source"]),
+        ] {
+            let mut git = MockGit::new();
+            git.branch_shas.insert("source".into(), tip.into());
+            git.rev_list_count_result = count;
+            report_commits_past_landing(&git, "source", &landed_pr_fixture(), "main", "v1.0.0").unwrap();
+            assert_eq!(git.calls(), calls);
+        }
+    }
+
+    #[test]
+    fn an_existing_tag_is_reused_only_at_the_expected_merge_commit() {
+        for actual in ["merged", "different-commit"] {
+            let mut git = MockGit::new();
+            git.existing_tags.insert("v1.0.0".into());
+            git.tag_commits.insert("v1.0.0".into(), actual.into());
+            let result = tag_at_if_missing(&git, "v1.0.0", "release", "merged");
+            if actual == "merged" {
+                result.unwrap();
+            } else {
+                let error = result.unwrap_err();
+                assert!(error.contains("different-commit"));
+                assert!(error.contains("not the PR merge commit merged"));
+            }
+            assert_eq!(git.calls(), ["tag_exists:v1.0.0", "tag_commit_sha:v1.0.0"]);
+        }
+    }
+
+    #[test]
+    fn origin_reconciliation_preserves_behind_and_diverged_local_branches() {
+        for behind in [false, true] {
+            let mut git = MockGit::new();
+            git.existing_remote_branches.insert("source".into());
+            if behind {
+                git.ancestors.insert(("source".into(), "origin/source".into()));
+            }
+            let error = reconcile_with_origin(&git, "source").unwrap_err();
+            assert!(error.contains(if behind { "behind origin/source" } else { "have diverged" }));
+            assert_eq!(git.calls(), [
+                "remote_branch_exists:source",
+                "is_pushed:source",
+                "is_ancestor:origin/source:source",
+                "is_ancestor:source:origin/source",
+            ]);
+        }
+        let git = MockGit::new();
+        reconcile_with_origin(&git, "source").unwrap();
+        assert_eq!(git.calls(), ["remote_branch_exists:source", "push:source"]);
+    }
+
+    #[test]
+    fn finish_branch_cleanup_removes_all_discovered_finish_branches() {
+        let mut git = MockGit::new();
+        git.branches_matching = vec!["finish/source-into-main".into(), "finish/source-into-develop".into()];
+        git.existing_local_branches.insert("finish/source-into-main".into());
+        git.existing_remote_branches.insert("finish/source-into-develop".into());
+        cleanup_finish_branches(&git, "source").unwrap();
+        assert_eq!(git.calls(), [
+            "list_branches_matching:finish/source-into-*",
+            "local_branch_exists:finish/source-into-main",
+            "delete_branch_local:finish/source-into-main",
+            "remote_branch_exists:finish/source-into-main",
+            "local_branch_exists:finish/source-into-develop",
+            "remote_branch_exists:finish/source-into-develop",
+            "delete_branch_remote:finish/source-into-develop",
+        ]);
+    }
+
+    #[test]
+    fn merging_refuses_to_change_a_dirty_other_worktree() {
+        let mut git = MockGit::new();
+        git.worktrees.insert("main".into(), "/other-tree".into());
+        git.working_tree_clean = false;
+        let error = merge_where_checked_out(&git, "source", "main", "merge source").unwrap_err();
+        assert!(error.contains("/other-tree"));
+        assert!(error.contains("Commit or stash"));
+        assert_eq!(git.calls(), ["worktree_of:main", "is_working_tree_clean_at:/other-tree"]);
+    }
+
+    #[test]
+    fn fully_prepared_remote_finish_branch_needs_no_mutations() {
+        let mut git = MockGit::new();
+        git.existing_remote_branches.extend(["source".into(), "finish/source-into-main".into()]);
+        git.pushed_branches.insert("source".into());
+        git.ancestors.extend([
+            ("source".into(), "origin/finish/source-into-main".into()),
+            ("origin/main".into(), "origin/finish/source-into-main".into()),
+        ]);
+        assert_eq!(ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(), "finish/source-into-main");
+        assert_eq!(git.calls(), [
+            "remote_branch_exists:source",
+            "is_pushed:source",
+            "remote_branch_exists:finish/source-into-main",
+            "is_ancestor:source:origin/finish/source-into-main",
+            "is_ancestor:origin/main:origin/finish/source-into-main",
+        ]);
+    }
+
+    #[test]
+    fn stale_remote_finish_branch_is_refreshed_and_pushed_after_both_merges() {
+        let mut git = MockGit::new();
+        git.existing_remote_branches.insert("finish/source-into-main".into());
+        assert_eq!(ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(), "finish/source-into-main");
+        assert_eq!(git.calls(), [
+            "remote_branch_exists:source",
+            "push:source",
+            "remote_branch_exists:finish/source-into-main",
+            "is_ancestor:source:origin/finish/source-into-main",
+            "local_branch_exists:finish/source-into-main",
+            "create_branch_no_checkout:finish/source-into-main:origin/finish/source-into-main",
+            "is_ancestor:source:finish/source-into-main",
+            "current_branch",
+            "checkout:finish/source-into-main",
+            "ff_merge:origin/finish/source-into-main",
+            "merge:source:chore: refresh finish/source-into-main with source",
+            "checkout:develop",
+            "is_ancestor:origin/main:finish/source-into-main",
+            "current_branch",
+            "checkout:finish/source-into-main",
+            "merge:origin/main:chore: merge main into finish/source-into-main",
+            "checkout:develop",
+            "push:finish/source-into-main",
+        ]);
+    }
+
+    #[test]
+    fn a_local_finish_branch_refresh_keeps_the_target_it_already_contains() {
+        let mut git = MockGit::new();
+        git.existing_local_branches.insert("finish/source-into-main".into());
+        git.ancestors.insert(("origin/main".into(), "finish/source-into-main".into()));
+
+        assert_eq!(
+            ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(),
+            "finish/source-into-main"
+        );
+        assert_eq!(git.calls(), [
+            "remote_branch_exists:source",
+            "push:source",
+            "remote_branch_exists:finish/source-into-main",
+            "local_branch_exists:finish/source-into-main",
+            "is_ancestor:source:finish/source-into-main",
+            "current_branch",
+            "checkout:finish/source-into-main",
+            "merge:source:chore: refresh finish/source-into-main with source",
+            "checkout:develop",
+            "is_ancestor:origin/main:finish/source-into-main",
+            "push:finish/source-into-main",
+        ]);
+    }
+
+    #[test]
+    fn tip_is_landed_only_with_matching_head_or_finish_branch_containment() {
+        for evidence in ["matching-head", "remote-finish", "local-finish", "none"] {
+            let mut git = MockGit::new();
+            let finish = "finish/source-into-main";
+            git.existing_remote_branches.insert(finish.into());
+            git.existing_local_branches.insert(finish.into());
+            match evidence {
+                "matching-head" => { git.head_sha = "old-head".into(); }
+                "remote-finish" => { git.ancestors.insert(("source".into(), "origin/finish/source-into-main".into())); }
+                "local-finish" => { git.ancestors.insert(("source".into(), finish.into())); }
+                _ => {}
+            }
+            let pr = landed_pr_fixture();
+            let expected = evidence != "none";
+            assert_eq!(landing_contains_tip(&git, "source", "main", &pr).unwrap(), expected, "{evidence}");
+            assert_eq!(tip_landed_somewhere(&git, "source", &[pr], &[finish.into()]).unwrap(), expected, "{evidence}");
+            assert!(git.calls().iter().all(|call| call.starts_with("branch_sha:") || call.starts_with("remote_branch_exists:") || call.starts_with("local_branch_exists:") || call.starts_with("is_ancestor:")));
+        }
+        let git = MockGit::new();
+        assert!(!tip_landed_somewhere(&git, "source", &[], &["finish/source-into-main".into()]).unwrap());
+        assert_eq!(git.calls(), [
+            "branch_sha:source",
+            "remote_branch_exists:finish/source-into-main",
+            "local_branch_exists:finish/source-into-main",
+        ]);
+    }
+
+    #[test]
+    fn strict_landing_returns_existing_content_or_opens_the_required_pr() {
+        for scenario in ["landed-pr", "content-present", "pending-pr"] {
+            let mut git = MockGit::new();
+            let mut hosting = MockHosting::new();
+            if scenario == "landed-pr" {
+                git.head_sha = "old-head".into();
+                git.parent_counts.insert("merged".into(), 2);
+                git.ancestors.insert(("merged".into(), "origin/main".into()));
+                hosting.merged_prs_to.insert(("source".into(), "main".into()), landed_pr_fixture());
+            } else if scenario == "content-present" {
+                git.ancestors.insert(("source".into(), "origin/main".into()));
+            }
+            let result = land_leg_strict(&git, &hosting, "source", "main", "land source", None, "gflow finish", false).unwrap();
+            match result {
+                LegState::Landed(pr) => {
+                    assert_eq!(scenario, "landed-pr");
+                    assert_eq!(pr, landed_pr_fixture());
+                }
+                LegState::ContentPresent => assert_eq!(scenario, "content-present"),
+                LegState::Pending { url, finish } => {
+                    assert_eq!(scenario, "pending-pr");
+                    assert_eq!(url, "https://github.com/org/repo/pull/1");
+                    assert_eq!(finish, "finish/source-into-main");
+                    assert_eq!(hosting.calls().last().unwrap(), "create_or_get_pr:finish/source-into-main:main:land source:empty-body");
+                }
+            }
+            if scenario != "pending-pr" {
+                assert!(!hosting.calls().iter().any(|call| call.starts_with("create_or_get_pr:")));
+                assert!(!git.calls().iter().any(|call| call.starts_with("push:") || call.starts_with("checkout:")));
+            }
+        }
+    }
 
     #[test]
     fn completion_instruction_for_a_work_pr_demands_squash() {

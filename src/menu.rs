@@ -1,13 +1,27 @@
 use std::io::{self, Write};
 use crossterm::{
     cursor, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    execute, queue,
     style::{self, Stylize},
     terminal,
 };
 use crate::action::{validate_branch_name, Action};
 use crate::git::branch::BranchType;
 use crate::prompt::Prompter;
+
+macro_rules! queue_terminal {
+    ($out:expr, $($command:expr),+ $(,)?) => {{
+        (|| -> io::Result<()> {
+            $($out.queue_command($command)?;)+
+            Ok(())
+        })()
+    }};
+}
+
+macro_rules! execute_terminal {
+    ($out:expr, $($command:expr),+ $(,)?) => {{
+        queue_terminal!($out, $($command),+).and_then(|()| $out.flush())
+    }};
+}
 
 /// The real `Prompter`: the interactive select menu on stderr.
 pub struct MenuPrompter;
@@ -44,43 +58,76 @@ impl ReleaseOption {
     const ALL: [Self; 4] = [Self::FinishRelease, Self::StartReleaseFix, Self::BumpVersion, Self::SyncWithDevelop];
 }
 
-/// Enables raw mode on construction; restores the terminal (cursor visible, raw
-/// mode off) on drop. Every exit path — success, error, Ctrl-C/Esc abort — runs
-/// the same cleanup structurally, so the documented "no raw-mode leak" invariant
-/// is enforced by the type, not by hand-written cleanup at each return.
-struct TerminalGuard;
+trait Terminal: Write {
+    fn queue_command(&mut self, command: impl crossterm::Command) -> io::Result<()>;
+    fn queue_styled(&mut self, text: style::StyledContent<impl std::fmt::Display>) -> io::Result<()>;
+    fn enable_raw_mode(&mut self) -> io::Result<()>;
+    fn disable_raw_mode(&mut self) -> io::Result<()>;
+    fn read_event(&mut self) -> io::Result<Event>;
+}
 
-impl TerminalGuard {
-    fn enter(context: &str) -> Result<Self, String> {
-        terminal::enable_raw_mode().map_err(|e| format!("{context}: {e}"))?;
-        Ok(Self)
+struct SystemTerminal(io::Stderr);
+
+impl Write for SystemTerminal {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
     }
 }
 
-impl Drop for TerminalGuard {
+impl Terminal for SystemTerminal {
+    fn queue_command(&mut self, command: impl crossterm::Command) -> io::Result<()> {
+        crossterm::queue!(self, command)
+    }
+
+    fn queue_styled(&mut self, text: style::StyledContent<impl std::fmt::Display>) -> io::Result<()> {
+        crossterm::queue!(self, style::PrintStyledContent(text))
+    }
+
+    fn enable_raw_mode(&mut self) -> io::Result<()> {
+        terminal::enable_raw_mode()
+    }
+
+    fn disable_raw_mode(&mut self) -> io::Result<()> {
+        terminal::disable_raw_mode()
+    }
+
+    fn read_event(&mut self) -> io::Result<Event> {
+        event::read()
+    }
+}
+
+/// Restores cursor visibility and raw mode on every exit path.
+struct TerminalGuard<'a, T: Terminal>(&'a mut T);
+
+impl<'a, T: Terminal> TerminalGuard<'a, T> {
+    fn enter(out: &'a mut T, context: &str) -> Result<Self, String> {
+        out.enable_raw_mode().map_err(|e| format!("{context}: {e}"))?;
+        Ok(Self(out))
+    }
+}
+
+impl<T: Terminal> Drop for TerminalGuard<'_, T> {
     fn drop(&mut self) {
-        let _ = execute!(io::stderr(), cursor::Show);
-        let _ = terminal::disable_raw_mode();
+        let _ = execute_terminal!(self.0, cursor::Show);
+        let _ = self.0.disable_raw_mode();
     }
 }
 
-fn render_menu(out: &mut io::Stderr, items: &[&str], selected: usize) -> io::Result<()> {
+fn render_menu(out: &mut impl Terminal, items: &[&str], selected: usize) -> io::Result<()> {
     for (i, item) in items.iter().enumerate() {
         let number = i + 1;
-        queue!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine))?;
+        queue_terminal!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine))?;
         if i == selected {
-            queue!(
-                out,
-                style::PrintStyledContent(format!("> {number}) {item}").cyan().bold()),
-            )?;
+            out.queue_styled(format!("> {number}) {item}").cyan().bold())?;
         } else {
-            queue!(
-                out,
-                style::PrintStyledContent(format!("  {number}) {item}").dim()),
-            )?;
+            out.queue_styled(format!("  {number}) {item}").dim())?;
         }
         if i < items.len() - 1 {
-            queue!(out, style::Print("\r\n"))?;
+            queue_terminal!(out, style::Print("\r\n"))?;
         }
     }
     out.flush()?;
@@ -88,33 +135,34 @@ fn render_menu(out: &mut io::Stderr, items: &[&str], selected: usize) -> io::Res
 }
 
 pub fn show_select(prompt: &str, items: &[&str]) -> Result<usize, String> {
+    show_select_on(&mut SystemTerminal(io::stderr()), prompt, items)
+}
+
+fn show_select_on(out: &mut impl Terminal, prompt: &str, items: &[&str]) -> Result<usize, String> {
     if items.is_empty() {
         return Err("Menu error: no items to select from".to_string());
     }
 
-    let mut out = io::stderr();
     let mut selected: usize = 0;
 
     // Print prompt (clear line first to avoid ghost text from previous prompts)
-    execute!(
-        out,
-        cursor::MoveToColumn(0),
-        terminal::Clear(terminal::ClearType::CurrentLine),
-        style::PrintStyledContent("? ".green().bold()),
-        style::Print(prompt),
-        style::Print("\n"),
-    ).map_err(|e| format!("Menu error: {e}"))?;
+    (|| {
+        queue_terminal!(out, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::CurrentLine))?;
+        out.queue_styled("? ".green().bold())?;
+        execute_terminal!(out, style::Print(prompt), style::Print("\n"))
+    })().map_err(|e| format!("Menu error: {e}"))?;
 
-    let _guard = TerminalGuard::enter("Menu error")?;
+    let guard = TerminalGuard::enter(out, "Menu error")?;
+    let out = &mut *guard.0;
 
     // Hide cursor during selection; the guard re-shows it on every exit path.
-    execute!(out, cursor::Hide).map_err(|e| format!("Menu error: {e}"))?;
+    execute_terminal!(out, cursor::Hide).map_err(|e| format!("Menu error: {e}"))?;
 
     // Initial render
-    render_menu(&mut out, items, selected).map_err(|e| format!("Menu error: {e}"))?;
+    render_menu(out, items, selected).map_err(|e| format!("Menu error: {e}"))?;
 
     let result = loop {
-        let ev = event::read().map_err(|e| format!("Menu error: {e}"))?;
+        let ev = out.read_event().map_err(|e| format!("Menu error: {e}"))?;
 
         // On Windows, crossterm emits Press + Release events; only handle Press
         let Event::Key(KeyEvent { kind: KeyEventKind::Press, code, modifiers, .. }) = ev else {
@@ -145,10 +193,10 @@ pub fn show_select(prompt: &str, items: &[&str]) -> Result<usize, String> {
                         selected = idx - 1;
                         // Re-render to show selection highlighted before returning
                         if items.len() > 1 {
-                            let _ = execute!(out, cursor::MoveUp((items.len() - 1) as u16));
+                            let _ = execute_terminal!(out, cursor::MoveUp((items.len() - 1) as u16));
                         }
-                        let _ = execute!(out, cursor::MoveToColumn(0));
-                        let _ = render_menu(&mut out, items, selected);
+                        let _ = execute_terminal!(out, cursor::MoveToColumn(0));
+                        let _ = render_menu(out, items, selected);
                         break selected;
                     }
                 }
@@ -158,15 +206,15 @@ pub fn show_select(prompt: &str, items: &[&str]) -> Result<usize, String> {
 
         // Redraw: move cursor up to start of menu, then re-render
         if items.len() > 1 {
-            execute!(out, cursor::MoveUp((items.len() - 1) as u16))
+            execute_terminal!(out, cursor::MoveUp((items.len() - 1) as u16))
                 .map_err(|e| format!("Menu error: {e}"))?;
         }
-        execute!(out, cursor::MoveToColumn(0)).map_err(|e| format!("Menu error: {e}"))?;
-        render_menu(&mut out, items, selected).map_err(|e| format!("Menu error: {e}"))?;
+        execute_terminal!(out, cursor::MoveToColumn(0)).map_err(|e| format!("Menu error: {e}"))?;
+        render_menu(out, items, selected).map_err(|e| format!("Menu error: {e}"))?;
     };
 
     // Move past the menu; the guard restores cursor + raw mode on drop.
-    let _ = execute!(out, style::Print("\r\n"));
+    let _ = execute_terminal!(out, style::Print("\r\n"));
 
     Ok(result)
 }
@@ -176,20 +224,18 @@ pub fn show_select(prompt: &str, items: &[&str]) -> Result<usize, String> {
 /// Windows Press-filter, Ctrl-C/Esc abort, Enter, and backspace handling all
 /// live here. `transform` decides which char (if any) each keystroke appends,
 /// given the buffer typed so far.
-fn read_raw_line(prompt: &str, transform: impl Fn(&str, char) -> Option<char>) -> Result<String, String> {
-    let mut out = io::stderr();
+fn read_raw_line(out: &mut impl Terminal, prompt: &str, transform: impl Fn(&str, char) -> Option<char>) -> Result<String, String> {
     let mut input = String::new();
 
-    execute!(
-        out,
-        style::PrintStyledContent("? ".green().bold()),
-        style::Print(format!("{prompt}: ")),
-    ).map_err(|e| format!("Input error: {e}"))?;
+    out.queue_styled("? ".green().bold())
+        .and_then(|()| execute_terminal!(out, style::Print(format!("{prompt}: "))))
+        .map_err(|e| format!("Input error: {e}"))?;
 
-    let _guard = TerminalGuard::enter("Input error")?;
+    let guard = TerminalGuard::enter(out, "Input error")?;
+    let out = &mut *guard.0;
 
     let result = loop {
-        let ev = event::read().map_err(|e| format!("Input error: {e}"))?;
+        let ev = out.read_event().map_err(|e| format!("Input error: {e}"))?;
 
         // On Windows, crossterm emits Press + Release events; only handle Press
         let Event::Key(KeyEvent { kind: KeyEventKind::Press, code, modifiers, .. }) = ev else {
@@ -203,13 +249,13 @@ fn read_raw_line(prompt: &str, transform: impl Fn(&str, char) -> Option<char>) -
             (KeyCode::Enter, _) => break input,
             (KeyCode::Backspace, _) => {
                 if input.pop().is_some() {
-                    let _ = execute!(out, cursor::MoveLeft(1), style::Print(" "), cursor::MoveLeft(1));
+                    let _ = execute_terminal!(out, cursor::MoveLeft(1), style::Print(" "), cursor::MoveLeft(1));
                 }
             }
             (KeyCode::Char(c), _) => {
                 if let Some(ch) = transform(&input, c) {
                     input.push(ch);
-                    let _ = execute!(out, style::Print(ch));
+                    let _ = execute_terminal!(out, style::Print(ch));
                 }
             }
             _ => {}
@@ -218,7 +264,7 @@ fn read_raw_line(prompt: &str, transform: impl Fn(&str, char) -> Option<char>) -
 
     // A real newline, not a cursor move: on the terminal's last row a cursor
     // move cannot scroll, so the next output would overwrite this prompt.
-    let _ = execute!(out, style::Print("\r\n"));
+    let _ = execute_terminal!(out, style::Print("\r\n"));
     Ok(result)
 }
 
@@ -232,8 +278,12 @@ fn shape_branch_name_char(typed: &str, c: char) -> Option<char> {
 }
 
 pub fn prompt_name(prompt: &str) -> Result<String, String> {
+    prompt_name_on(&mut SystemTerminal(io::stderr()), prompt)
+}
+
+fn prompt_name_on(out: &mut impl Terminal, prompt: &str) -> Result<String, String> {
     loop {
-        let result = read_raw_line(prompt, shape_branch_name_char)?;
+        let result = read_raw_line(out, prompt, shape_branch_name_char)?;
 
         // Trim leading/trailing hyphens
         let trimmed = result.trim_matches('-').to_string();
@@ -241,11 +291,8 @@ pub fn prompt_name(prompt: &str) -> Result<String, String> {
         match validate_branch_name(&trimmed) {
             Ok(()) => return Ok(trimmed),
             Err(e) => {
-                let _ = execute!(
-                    io::stderr(),
-                    style::PrintStyledContent(format!("  {e}").red()),
-                    style::Print("\r\n"),
-                );
+                let _ = out.queue_styled(format!("  {e}").red())
+                    .and_then(|()| execute_terminal!(out, style::Print("\r\n")));
                 // Loop to re-prompt
             }
         }
@@ -256,7 +303,11 @@ pub fn prompt_name(prompt: &str) -> Result<String, String> {
 /// validation). Unlike `prompt_name`, this does not mangle input into a branch
 /// name — use it for paths and shell commands.
 pub fn prompt_line(prompt: &str) -> Result<String, String> {
-    Ok(read_raw_line(prompt, |_, c| Some(c))?.trim().to_string())
+    prompt_line_on(&mut SystemTerminal(io::stderr()), prompt)
+}
+
+fn prompt_line_on(out: &mut impl Terminal, prompt: &str) -> Result<String, String> {
+    Ok(read_raw_line(out, prompt, |_, c| Some(c))?.trim().to_string())
 }
 
 pub fn show_menu(prompter: &dyn Prompter, branch_type: &BranchType, current_branch: &str, main_branch: &str) -> Result<Action, String> {
@@ -342,7 +393,287 @@ pub fn show_menu(prompter: &dyn Prompter, branch_type: &BranchType, current_bran
 
 #[cfg(test)]
 mod tests {
-    use super::shape_branch_name_char;
+    use super::*;
+    use std::collections::VecDeque;
+
+    struct ScriptedTerminal {
+        events: VecDeque<io::Result<Event>>,
+        output: Vec<u8>,
+        raw: bool,
+        entered: usize,
+        exited: usize,
+        fail_enter: bool,
+        fail_write_at: Option<usize>,
+        fail_flush_at: Option<usize>,
+        writes: usize,
+        flushes: usize,
+        output_at_read: Vec<(usize, usize)>,
+        styled: Vec<(String, style::ContentStyle)>,
+    }
+
+    impl ScriptedTerminal {
+        fn new(events: impl IntoIterator<Item = Event>) -> Self {
+            Self {
+                events: events.into_iter().map(Ok).collect(),
+                output: Vec::new(),
+                raw: false,
+                entered: 0,
+                exited: 0,
+                fail_enter: false,
+                fail_write_at: None,
+                fail_flush_at: None,
+                writes: 0,
+                flushes: 0,
+                output_at_read: Vec::new(),
+                styled: Vec::new(),
+            }
+        }
+
+        fn text(&self) -> String {
+            String::from_utf8(self.output.clone()).unwrap()
+        }
+
+        fn assert_restored(&self) {
+            assert!(!self.raw, "terminal must leave raw mode");
+            assert_eq!(self.exited, self.entered);
+            if self.entered > 0 {
+                assert!(self.text().contains("\x1b[?25h"), "cursor must be shown");
+            }
+        }
+    }
+
+    impl Write for ScriptedTerminal {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.fail_write_at == Some(self.writes) {
+                return Err(io::Error::other("output unavailable"));
+            }
+            self.output.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.fail_flush_at == Some(self.flushes) {
+                return Err(io::Error::other("flush unavailable"));
+            }
+            Ok(())
+        }
+    }
+
+    impl Terminal for ScriptedTerminal {
+        fn queue_command(&mut self, command: impl crossterm::Command) -> io::Result<()> {
+            let mut encoded = String::new();
+            command.write_ansi(&mut encoded).unwrap();
+            self.write_all(encoded.as_bytes())
+        }
+
+        fn queue_styled(&mut self, text: style::StyledContent<impl std::fmt::Display>) -> io::Result<()> {
+            let value = text.content().to_string();
+            self.styled.push((value.clone(), *text.style()));
+            self.write_all(value.as_bytes())
+        }
+
+        fn enable_raw_mode(&mut self) -> io::Result<()> {
+            if self.fail_enter {
+                return Err(io::Error::other("raw mode unavailable"));
+            }
+            self.raw = true;
+            self.entered += 1;
+            Ok(())
+        }
+
+        fn disable_raw_mode(&mut self) -> io::Result<()> {
+            self.raw = false;
+            self.exited += 1;
+            Ok(())
+        }
+
+        fn read_event(&mut self) -> io::Result<Event> {
+            assert!(self.raw, "events must be read in raw mode");
+            self.output_at_read.push((self.writes, self.flushes));
+            self.events.pop_front().expect("unexpected request for input")
+        }
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn keys(text: &str) -> Vec<Event> {
+        text.chars().map(|c| key(KeyCode::Char(c))).chain([key(KeyCode::Enter)]).collect()
+    }
+
+    #[test]
+    fn arrow_selection_is_bounded_and_restores_the_terminal() {
+        let mut terminal = ScriptedTerminal::new([
+            key(KeyCode::Up), key(KeyCode::Down), key(KeyCode::Down),
+            key(KeyCode::Down), key(KeyCode::Up), key(KeyCode::Enter),
+        ]);
+
+        assert_eq!(show_select_on(&mut terminal, "Pick", &["first", "second", "third"]), Ok(1));
+        assert!(terminal.text().contains("> 2) second"));
+        assert!(terminal.text().ends_with("\r\n\x1b[?25h"));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn digit_selection_confirms_only_available_one_to_nine_entries() {
+        for (items, input, selected) in [
+            (vec!["only"], "0x92", 0),
+            (vec!["first", "second"], "03x2", 1),
+            (vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], "09", 8),
+        ] {
+            let mut terminal = ScriptedTerminal::new(keys(input));
+            assert_eq!(show_select_on(&mut terminal, "Pick", &items), Ok(selected));
+            terminal.assert_restored();
+        }
+        let mut terminal = ScriptedTerminal::new([key(KeyCode::Char('1'))]);
+        assert_eq!(show_select_on(&mut terminal, "Pick", &["only"]), Ok(0));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn selection_ignores_key_releases_and_non_key_events() {
+        let mut terminal = ScriptedTerminal::new([
+            Event::Resize(80, 24),
+            Event::Key(KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release)),
+            Event::Key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL)),
+            key(KeyCode::Left), key(KeyCode::Enter),
+        ]);
+        assert_eq!(show_select_on(&mut terminal, "Pick", &["first", "second"]), Ok(0));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn empty_menus_fail_before_opening_the_terminal() {
+        let mut terminal = ScriptedTerminal::new([]);
+        assert_eq!(show_select_on(&mut terminal, "Pick", &[]), Err("Menu error: no items to select from".into()));
+        assert!(terminal.output.is_empty());
+        assert_eq!(terminal.entered, 0);
+    }
+
+    #[test]
+    fn free_form_input_preserves_characters_and_supports_backspace() {
+        let mut events = vec![key(KeyCode::Backspace), Event::FocusGained,
+            Event::Key(KeyEvent::new_with_kind(KeyCode::Char('x'), KeyModifiers::NONE, KeyEventKind::Release)),
+            key(KeyCode::Left)];
+        events.extend("  ~/my folder/x".chars().map(|c| key(KeyCode::Char(c))));
+        events.extend([key(KeyCode::Backspace), key(KeyCode::Char('é')), key(KeyCode::Backspace), key(KeyCode::Char('z')), key(KeyCode::Enter)]);
+        let mut terminal = ScriptedTerminal::new(events);
+        assert_eq!(prompt_line_on(&mut terminal, "Path"), Ok("~/my folder/z".into()));
+        assert!(terminal.text().contains("Path: "));
+        assert!(terminal.text().contains("\x1b[1D \x1b[1D"));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn branch_names_are_shaped_and_invalid_names_are_reprompted() {
+        let mut events = vec![
+            key(KeyCode::Left), Event::FocusGained,
+            Event::Key(KeyEvent::new_with_kind(KeyCode::Char('x'), KeyModifiers::NONE, KeyEventKind::Release)),
+            key(KeyCode::Backspace), key(KeyCode::Char('x')), key(KeyCode::Backspace),
+        ];
+        events.extend(keys("---"));
+        events.extend(keys("bad..name"));
+        events.extend(keys(" --passkey  login-- "));
+        let mut terminal = ScriptedTerminal::new(events);
+
+        assert_eq!(prompt_name_on(&mut terminal, "Name"), Ok("passkey-login".into()));
+        assert_eq!(terminal.entered, 3);
+        assert!(terminal.text().contains("Name cannot be empty"));
+        assert!(terminal.text().contains("Invalid branch name"));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn escape_and_control_c_abort_selection_and_both_text_prompts() {
+        for event in [key(KeyCode::Esc), Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))] {
+            let mut terminal = ScriptedTerminal::new([event.clone()]);
+            assert_eq!(show_select_on(&mut terminal, "Pick", &["only"]), Err("Aborted".into()));
+            terminal.assert_restored();
+            let mut terminal = ScriptedTerminal::new([event.clone()]);
+            assert_eq!(prompt_name_on(&mut terminal, "Name"), Err("Aborted".into()));
+            terminal.assert_restored();
+            let mut terminal = ScriptedTerminal::new([event]);
+            assert_eq!(prompt_line_on(&mut terminal, "Line"), Err("Aborted".into()));
+            terminal.assert_restored();
+        }
+    }
+
+    #[test]
+    fn raw_mode_failures_keep_input_unread_and_name_the_operation() {
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.fail_enter = true;
+        assert_eq!(show_select_on(&mut terminal, "Pick", &["only"]), Err("Menu error: raw mode unavailable".into()));
+        assert_eq!(prompt_line_on(&mut terminal, "Line"), Err("Input error: raw mode unavailable".into()));
+        assert_eq!(prompt_name_on(&mut terminal, "Name"), Err("Input error: raw mode unavailable".into()));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn event_read_failures_restore_the_terminal_and_name_the_operation() {
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.events.push_back(Err(io::Error::other("input unavailable")));
+        assert_eq!(show_select_on(&mut terminal, "Pick", &["only"]), Err("Menu error: input unavailable".into()));
+        terminal.assert_restored();
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.events.push_back(Err(io::Error::other("input unavailable")));
+        assert_eq!(prompt_line_on(&mut terminal, "Line"), Err("Input error: input unavailable".into()));
+        terminal.assert_restored();
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.events.push_back(Err(io::Error::other("input unavailable")));
+        assert_eq!(prompt_name_on(&mut terminal, "Name"), Err("Input error: input unavailable".into()));
+        terminal.assert_restored();
+    }
+
+    #[test]
+    fn menu_rendering_marks_only_the_selected_entry() {
+        let mut terminal = ScriptedTerminal::new([]);
+        render_menu(&mut terminal, &["first", "second"], 1).unwrap();
+        assert_eq!(terminal.styled, vec![
+            ("  1) first".into(), *"".dim().style()),
+            ("> 2) second".into(), *"".cyan().bold().style()),
+        ]);
+    }
+
+    #[test]
+    fn menu_output_failures_stop_selection_and_always_restore_raw_mode() {
+        let events = [key(KeyCode::Down), key(KeyCode::Enter)];
+        let mut successful = ScriptedTerminal::new(events.clone());
+        assert_eq!(show_select_on(&mut successful, "Pick", &["first", "second"]), Ok(1));
+        let (required_writes, required_flushes) = successful.output_at_read[1];
+        for index in 1..=successful.writes {
+            let mut terminal = ScriptedTerminal::new(events.clone());
+            terminal.fail_write_at = Some(index);
+            let result = show_select_on(&mut terminal, "Pick", &["first", "second"]);
+            let expected = if index <= required_writes { Err("Menu error: output unavailable".into()) } else { Ok(1) };
+            assert_eq!(result, expected, "write {index}");
+            assert!(!terminal.raw);
+            assert_eq!(terminal.exited, terminal.entered);
+        }
+        for index in 1..=successful.flushes {
+            let mut terminal = ScriptedTerminal::new(events.clone());
+            terminal.fail_flush_at = Some(index);
+            let result = show_select_on(&mut terminal, "Pick", &["first", "second"]);
+            let expected = if index <= required_flushes { Err("Menu error: flush unavailable".into()) } else { Ok(1) };
+            assert_eq!(result, expected, "flush {index}");
+            assert!(!terminal.raw);
+            assert_eq!(terminal.exited, terminal.entered);
+        }
+    }
+
+    #[test]
+    fn input_prompt_output_failures_stop_before_reading_a_value() {
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.fail_write_at = Some(1);
+        assert_eq!(prompt_line_on(&mut terminal, "Line"), Err("Input error: output unavailable".into()));
+        assert_eq!(terminal.entered, 0);
+        let mut terminal = ScriptedTerminal::new([]);
+        terminal.fail_flush_at = Some(1);
+        assert_eq!(prompt_name_on(&mut terminal, "Name"), Err("Input error: flush unavailable".into()));
+        assert_eq!(terminal.entered, 0);
+    }
 
     /// Type `keys` one at a time through the shaper, as the prompt does.
     fn typed(keys: &str) -> String {
