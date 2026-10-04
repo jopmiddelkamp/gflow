@@ -36,7 +36,7 @@ jobs:
             /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }} --comment
 
             For test changes, check nearby tests and table cases for the same contract.
-            Flag redundant tests only when setup, assertions, entry point, and platform match.
+            Flag redundant tests only when setup, assertions, entry point, platform, and test binary match.
             Name the retained test for every proposed deletion; preserve distinct errors and boundaries.
             Equal code coverage alone does not prove that tests are redundant.
             Check that cleanup includes before-and-after line, function, and region coverage evidence.

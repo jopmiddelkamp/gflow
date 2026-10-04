@@ -2,7 +2,8 @@ mod common;
 
 use common::{MockGit, MockHosting};
 use gflow::flows::finish_hotfix::finish_hotfix;
-use gflow::repo_config::{Mode, RepoConfig};
+use gflow::hosting::LandedPr;
+use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
 
 /// Configure a MockGit for a "fresh start" hotfix finish: nothing is yet merged,
 /// no tags exist, source branch still exists locally and remotely.
@@ -1059,4 +1060,210 @@ fn hotfix_cleanup_with_unlanded_tip_keeps_the_branch() {
 
     assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")),
         "an unlanded tip must never be deleted; calls: {:?}", git.calls());
+}
+
+fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected git failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        git.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn assert_hosting_failure(result: Result<(), String>, hosting: &MockHosting, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected hosting failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        hosting.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn any_landed_pr() -> LandedPr {
+    LandedPr {
+        url: "https://example.com/pr/1".into(),
+        head_sha: "headsha".into(),
+        merge_commit_sha: "merged".into(),
+    }
+}
+
+fn protected_cfg_with_strategy(strategy: BumpStrategy) -> RepoConfig {
+    RepoConfig {
+        mode: Mode::Protected,
+        bump_strategy: strategy,
+        ..RepoConfig::default()
+    }
+}
+
+fn landed_hotfix() -> (MockGit, MockHosting) {
+    let mut git = MockGit::new();
+    git.current_branch = "hotfix/1.1.1".into();
+    git.existing_local_branches.insert("hotfix/1.1.1".into());
+    git.existing_remote_branches.insert("hotfix/1.1.1".into());
+    git.branches_matching = vec!["release/1.2.0".into()];
+    let mut hosting = MockHosting::new();
+    for target in ["main", "develop", "release/1.2.0"] {
+        hosting
+            .merged_prs_to
+            .insert(("hotfix/1.1.1".into(), target.into()), any_landed_pr());
+        git.ancestors
+            .insert(("merged".into(), format!("origin/{target}")));
+    }
+    git.parent_counts.insert("merged".into(), 2);
+    (git, hosting)
+}
+
+#[test]
+fn free_hotfix_stops_after_each_failed_finish_step() {
+    for call in [
+        "is_ancestor:hotfix/1.1.1:main",
+        "tag_exists:v1.1.1",
+        "is_pushed:main",
+        "remote_tag_exists:v1.1.1",
+        "is_pushed:develop",
+        "list_branches_matching:release/*",
+        "is_pushed:release/1.2.0",
+        "is_linked_worktree",
+    ] {
+        let mut git = MockGit::new();
+        git.current_branch = "hotfix/1.1.1".into();
+        git.existing_local_branches.insert("hotfix/1.1.1".into());
+        git.existing_remote_branches.insert("hotfix/1.1.1".into());
+        git.branches_matching = vec!["release/1.2.0".into()];
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            finish_hotfix(
+                &git,
+                &MockHosting::new(),
+                &RepoConfig::default(),
+                1,
+                1,
+                1,
+                "main",
+                None,
+                false,
+            ),
+            &git,
+            call,
+        );
+    }
+}
+
+#[test]
+fn protected_hotfix_stops_after_failed_landed_finish_step() {
+    for (call, occurrence) in [
+        ("is_ancestor:merged:origin/main", 1),
+        ("tag_exists:v1.1.1", 1),
+        ("create_tag_at:v1.1.1:chore: hotfix 1.1.1:merged", 1),
+        ("remote_tag_exists:v1.1.1", 1),
+        ("branch_sha:hotfix/1.1.1", 1),
+        ("branch_sha:hotfix/1.1.1", 2),
+        ("list_branches_matching:release/*", 1),
+        ("branch_sha:hotfix/1.1.1", 3),
+        ("branch_sha:hotfix/1.1.1", 4),
+        ("list_branches_matching:finish/hotfix-1.1.1-into-*", 1),
+    ] {
+        let (mut git, hosting) = landed_hotfix();
+        git.fail_call = Some((call.into(), occurrence));
+        assert_git_failure(
+            finish_hotfix(
+                &git,
+                &hosting,
+                &protected_cfg_with_strategy(BumpStrategy::Rc),
+                1,
+                1,
+                1,
+                "main",
+                None,
+                false,
+            ),
+            &git,
+            call,
+        );
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+    }
+}
+
+#[test]
+fn protected_hotfix_stops_if_existing_tag_cannot_be_verified_or_pushed() {
+    for call in [
+        "tag_commit_sha:v1.1.1",
+        "is_ancestor:merged:origin/main",
+        "remote_tag_exists:v1.1.1",
+    ] {
+        let mut git = MockGit::new();
+        git.existing_tags.insert("v1.1.1".into());
+        git.tag_commits.insert("v1.1.1".into(), "merged".into());
+        git.ancestors
+            .insert(("merged".into(), "origin/main".into()));
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            finish_hotfix(
+                &git,
+                &MockHosting::new(),
+                &protected_cfg_with_strategy(BumpStrategy::Rc),
+                1,
+                1,
+                1,
+                "main",
+                None,
+                false,
+            ),
+            &git,
+            call,
+        );
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+    }
+}
+
+#[test]
+fn protected_hotfix_stops_before_publishing_when_main_landing_preparation_fails() {
+    let mut git = MockGit::new();
+    let call = "remote_branch_exists:hotfix/1.1.1";
+    git.fail_call = Some((call.into(), 1));
+    let hosting = MockHosting::new();
+    assert_git_failure(
+        finish_hotfix(
+            &git,
+            &hosting,
+            &protected_cfg_with_strategy(BumpStrategy::Rc),
+            1,
+            1,
+            1,
+            "main",
+            None,
+            false,
+        ),
+        &git,
+        call,
+    );
+    assert!(!hosting
+        .calls()
+        .iter()
+        .any(|c| c.starts_with("create_or_get_pr:")));
+}
+
+#[test]
+fn protected_hotfix_stops_after_hosting_errors_before_opening_later_legs() {
+    for call in [
+        "open_pr_to:hotfix/1.1.1:main",
+        "merged_pr_to:finish/hotfix-1.1.1-into-main:main",
+        "create_or_get_pr:finish/hotfix-1.1.1-into-main:main:chore: merge hotfix 1.1.1 into main:empty-body",
+    ] {
+        let git = MockGit::new();
+        let mut hosting = MockHosting::new();
+        hosting.fail_call = Some((call.into(), 1));
+        assert_hosting_failure(finish_hotfix(&git, &hosting, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1, 1, "main", None, false), &hosting, call);
+        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c.starts_with("delete_branch")));
+        assert!(!hosting.calls().iter().any(|c| c.contains(":develop")));
+    }
 }

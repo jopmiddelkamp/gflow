@@ -466,65 +466,27 @@ mod tests {
     }
 
     #[test]
-    fn bang_in_title() {
-        assert!(message_is_breaking("feat!: remove legacy API"));
-    }
-
-    #[test]
-    fn bang_with_scope() {
-        assert!(message_is_breaking("refactor(auth)!: rewrite token handling"));
-    }
-
-    #[test]
-    fn breaking_change_footer() {
-        let msg = "feat: new auth flow\n\nBREAKING CHANGE: old tokens are invalidated";
-        assert!(message_is_breaking(msg));
-    }
-
-    #[test]
-    fn breaking_change_footer_hyphenated() {
-        let msg = "feat: new auth\n\nBREAKING-CHANGE: old tokens invalidated";
-        assert!(message_is_breaking(msg));
-    }
-
-    #[test]
-    fn breaking_change_footer_case_insensitive() {
-        let msg = "feat: new auth\n\nbreaking change: old tokens invalidated";
-        assert!(message_is_breaking(msg));
-    }
-
-    #[test]
-    fn non_breaking_change_in_body_is_not_flagged() {
-        // This is the bug the reviewer caught — "non-breaking change" should NOT match
-        let msg = "feat: new feature\n\nThis is a non-breaking change to the API.";
-        assert!(!message_is_breaking(msg));
-    }
-
-    #[test]
-    fn breaking_change_mention_without_colon_is_not_flagged() {
-        // Only the footer format (with colon) should count
-        let msg = "feat: new feature\n\nWe discussed breaking change options earlier.";
-        assert!(!message_is_breaking(msg));
-    }
-
-    #[test]
-    fn plain_conventional_commit_is_not_breaking() {
-        assert!(!message_is_breaking("feat: add login page"));
-        assert!(!message_is_breaking("fix: correct typo"));
-        assert!(!message_is_breaking("chore: update deps"));
-    }
-
-    #[test]
-    fn an_unstructured_subject_only_breaks_when_the_footer_says_so() {
-        assert!(!message_is_breaking(""));
-        assert!(!message_is_breaking("update documentation!"));
-        assert!(message_is_breaking("remove old behavior\n\nBREAKING CHANGE: old input is rejected"));
-    }
-
-    #[test]
-    fn bang_in_body_does_not_count() {
-        // The ! must be in the title before the colon, not in the body
-        let msg = "feat: add feature\n\nThis is great!\nReally awesome.";
-        assert!(!message_is_breaking(msg));
+    fn message_is_breaking_follows_conventional_commits() {
+        for (case, msg, expected) in [
+            ("bang_in_title", "feat!: remove legacy API", true),
+            ("bang_with_scope", "refactor(auth)!: rewrite token handling", true),
+            ("breaking_change_footer", "feat: new auth flow\n\nBREAKING CHANGE: old tokens are invalidated", true),
+            ("breaking_change_footer_hyphenated", "feat: new auth\n\nBREAKING-CHANGE: old tokens invalidated", true),
+            ("breaking_change_footer_case_insensitive", "feat: new auth\n\nbreaking change: old tokens invalidated", true),
+            // "non-breaking change" contains "breaking change" but is prose, not the footer
+            ("non_breaking_change_in_body", "feat: new feature\n\nThis is a non-breaking change to the API.", false),
+            // Only the footer format (with colon) counts
+            ("breaking_change_mention_without_colon", "feat: new feature\n\nWe discussed breaking change options earlier.", false),
+            ("plain_feat", "feat: add login page", false),
+            ("plain_fix", "fix: correct typo", false),
+            ("plain_chore", "chore: update deps", false),
+            ("unstructured_empty", "", false),
+            ("unstructured_bang", "update documentation!", false),
+            ("unstructured_with_footer", "remove old behavior\n\nBREAKING CHANGE: old input is rejected", true),
+            // The ! must be in the title before the colon, not in the body
+            ("bang_in_body", "feat: add feature\n\nThis is great!\nReally awesome.", false),
+        ] {
+            assert_eq!(message_is_breaking(msg), expected, "{case}: {msg:?}");
+        }
     }
 }

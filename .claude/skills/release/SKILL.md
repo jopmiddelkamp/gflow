@@ -27,13 +27,6 @@ If the intent is ambiguous, ask the user to clarify.
 1. For major/minor: confirm you are on `develop`. If not, ask user if you should switch.
 2. For patch: confirm you are on `master`. If not, ask user if you should switch.
 3. Ensure working tree is clean (gflow auto-stashes for start, but version file updates need a clean state).
-4. Check Chocolatey moderation. While the first version (4.0.0) is pending and nothing is approved, every push fails with 403:
-   ```bash
-   curl -fsS --max-time 15 "https://community.chocolatey.org/api/v2/Packages(Id='gflow',Version='4.0.0')" | grep -oE '<d:PackageStatus>[^<]*'
-   ```
-   - `Approved`: delete this step from the skill. It can never fire again.
-   - `Submitted`: tell the user `publish-chocolatey` will fail. Offer to release anyway.
-   - Anything else, or a curl error: the result is unknown. Say so. Do not claim the job will fail.
 
 ## Major/minor release flow
 
@@ -128,7 +121,7 @@ id=$(gh run list --workflow ci.yml --branch vX.Y.Z --limit 1 --json databaseId -
 gh run watch "$id" --exit-status
 gh run view "$id" --json jobs --jq '.jobs[]|select(.name=="publish-chocolatey")|.conclusion'
 ```
-If `publish-chocolatey` failed with 403, the cause is moderation (Pre-flight step 4) or an API key without push rights for `gflow`. Check the log before you blame moderation. For moderation, give the user the run ID, `gh run rerun <id> --failed` for after approval, and the deadline: GitHub re-runs work only up to 30 days after the run. After that, the next release publishes the newer version.
+If `publish-chocolatey` failed with 403, check the log first. The usual cause is an API key without push rights for `gflow`. Give the user the run ID and `gh run rerun <id> --failed`; GitHub re-runs work only up to 30 days after the run.
 
 ## Summary of gflow commands used
 

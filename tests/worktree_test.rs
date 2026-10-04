@@ -1,13 +1,16 @@
 mod common;
 
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use common::{MockEditor, MockGit, MockPrompter};
+use common::{MockEditor, MockGit, MockPrompter, MockWorktreeSetup};
 use gflow::cli::WorktreeAction;
+use gflow::prompt::Prompter;
 use gflow::repo_config::Settings;
+use gflow::worktree_setup::SetupCommands;
 use gflow::worktree::{
-    config_target, ConfigScope,
+    self, config_target, open_worktree, ConfigScope, WorktreeContext, WorktreeEnv,
     worktree_path, WorktreeConfig, EDITOR_PRESETS,
     set_enabled, set_editor, set_path, use_default_path, show_status, wizard,
 };
@@ -97,19 +100,19 @@ fn target(prefix: &str) -> (common::TempDir, PathBuf) {
 }
 
 #[test]
-fn config_defaults_when_unset() {
-    let cfg = WorktreeConfig::from_settings(&settings(""));
-    assert!(!cfg.enabled);
-    assert_eq!(cfg.editor, "code");
-    assert_eq!(cfg.base_path, None);
-}
-
-#[test]
-fn config_reads_all_values() {
-    let cfg = WorktreeConfig::from_settings(&settings("worktree=true\neditor=cursor\npath=/wt\n"));
-    assert!(cfg.enabled);
-    assert_eq!(cfg.editor, "cursor");
-    assert_eq!(cfg.base_path.as_deref(), Some("/wt"));
+fn config_from_settings_resolves_each_parsed_input() {
+    for (case, text, enabled, editor, base_path) in [
+        ("defaults_when_unset", "", false, "code", None),
+        ("reads_all_values", "worktree=true\neditor=cursor\npath=/wt\n", true, "cursor", Some("/wt")),
+        ("whitespace_only_editor_falls_back_to_code", "editor=   \n", false, "code", None),
+        ("enabled_is_false_when_the_key_says_false", "worktree=false\n", false, "code", None),
+        ("preserves_none_editor", "editor=none\n", false, "none", None),
+    ] {
+        let cfg = WorktreeConfig::from_settings(&settings(text));
+        assert_eq!(cfg.enabled, enabled, "{case}: enabled");
+        assert_eq!(cfg.editor, editor, "{case}: editor");
+        assert_eq!(cfg.base_path.as_deref(), base_path, "{case}: base_path");
+    }
 }
 
 #[test]
@@ -121,24 +124,6 @@ fn config_trims_whitespace_from_editor_and_path() {
     let cfg = WorktreeConfig::from_settings(&raw);
     assert_eq!(cfg.editor, "code");
     assert_eq!(cfg.base_path.as_deref(), Some("/wt"));
-}
-
-#[test]
-fn config_whitespace_only_editor_falls_back_to_code() {
-    let cfg = WorktreeConfig::from_settings(&settings("editor=   \n"));
-    assert_eq!(cfg.editor, "code");
-}
-
-#[test]
-fn config_enabled_is_false_when_the_key_says_false() {
-    let cfg = WorktreeConfig::from_settings(&settings("worktree=false\n"));
-    assert!(!cfg.enabled);
-}
-
-#[test]
-fn config_preserves_none_editor() {
-    let cfg = WorktreeConfig::from_settings(&settings("editor=none\n"));
-    assert_eq!(cfg.editor, "none");
 }
 
 // --- `gflow worktree` config setters ---
@@ -377,27 +362,17 @@ fn repo_flag_selects_the_committed_file_and_local_flag_the_private_one() {
 }
 
 #[test]
-fn config_target_global_is_the_all_repos_file() {
-    let repo = PathBuf::from("/repos/app");
-    let target =
-        config_target(Some(&repo), Some(Path::new("/home/jop")), ConfigScope::Global).unwrap();
-    assert_eq!(target, PathBuf::from("/home/jop/.gflow/config"));
-}
-
-#[test]
-fn config_target_repo_is_the_repositorys_committed_config() {
-    let repo = PathBuf::from("/repos/app");
-    let target =
-        config_target(Some(&repo), Some(Path::new("/home/jop")), ConfigScope::Repo).unwrap();
-    assert_eq!(target, PathBuf::from("/repos/app/.gflow/config"));
-}
-
-#[test]
-fn config_target_local_is_the_private_per_repo_override() {
-    let repo = PathBuf::from("/repos/app");
-    let target =
-        config_target(Some(&repo), Some(Path::new("/home/jop")), ConfigScope::Local).unwrap();
-    assert_eq!(target, PathBuf::from("/repos/app/.gflow/config.local"));
+fn config_target_maps_each_scope_to_its_file() {
+    for (case, scope, expected) in [
+        ("global_is_the_all_repos_file", ConfigScope::Global, "/home/jop/.gflow/config"),
+        ("repo_is_the_repositorys_committed_config", ConfigScope::Repo, "/repos/app/.gflow/config"),
+        ("local_is_the_private_per_repo_override", ConfigScope::Local, "/repos/app/.gflow/config.local"),
+    ] {
+        let repo = PathBuf::from("/repos/app");
+        let target = config_target(Some(&repo), Some(Path::new("/home/jop")), scope)
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert_eq!(target, PathBuf::from(expected), "{case}");
+    }
 }
 
 #[test]
@@ -645,4 +620,128 @@ fn wizard_stops_before_editor_selection_when_enabling_cannot_be_saved() {
 
     assert!(err.contains("Failed to read"), "got: {err}");
     assert_eq!(prompter.calls().len(), 1);
+}
+
+struct ConfigDisappears<'a> {
+    target: &'a Path,
+    fail_at: usize,
+    selects: Cell<usize>,
+    custom_path: bool,
+}
+
+impl ConfigDisappears<'_> {
+    fn block_config(&self) {
+        std::fs::remove_file(self.target).unwrap();
+        std::fs::create_dir(self.target).unwrap();
+    }
+}
+
+impl Prompter for ConfigDisappears<'_> {
+    fn select(&self, _: &str, _: &[&str]) -> Result<usize, String> {
+        let call = self.selects.get() + 1;
+        self.selects.set(call);
+        if call == self.fail_at {
+            self.block_config();
+        }
+        Ok(usize::from(call == 3 && self.custom_path))
+    }
+
+    fn prompt_name(&self, _: &str) -> Result<String, String> {
+        panic!("worktree settings must not request a branch name")
+    }
+
+    fn prompt_line(&self, _: &str) -> Result<String, String> {
+        self.block_config();
+        Ok("/tmp/worktrees".into())
+    }
+}
+
+#[test]
+fn wizard_stops_when_a_later_setting_cannot_be_saved() {
+    for (fail_at, custom_path, prompts) in [(2, false, 2), (3, false, 3), (4, true, 3)] {
+        let dir = common::tmp_dir("gflow-wizard-late-write");
+        let target = dir.join("config");
+        let prompter = ConfigDisappears {
+            target: &target,
+            fail_at,
+            selects: Cell::new(0),
+            custom_path,
+        };
+        let error = worktree::wizard(&target, &prompter, ConfigScope::Global).unwrap_err();
+        assert!(error.contains("Failed to read"));
+        assert!(target.is_dir());
+        assert_eq!(prompter.selects.get(), prompts);
+    }
+}
+
+// The exact-script assertions below are also what pins the mock's
+// `call:arg:arg` recording format (decisions.md, Testing Strategy).
+
+/// Build a worktree config whose base path is an existing temp dir, so the
+/// flow's `create_dir_all` is a harmless no-op during tests.
+fn test_worktree_config(editor: &str) -> WorktreeConfig {
+    let base = std::env::temp_dir();
+    WorktreeConfig {
+        enabled: true,
+        editor: editor.to_string(),
+        base_path: Some(base.to_string_lossy().to_string()),
+    }
+}
+
+// --- worktrees.json setup commands ---
+
+fn setup_cmds() -> SetupCommands {
+    SetupCommands { file: "worktrees.json".into(), commands: vec!["fvm use".into(), "dart pub get".into()] }
+}
+
+fn worktree_for(branch: &str) -> String {
+    std::env::temp_dir().join(format!("beans-gitflow-{}", branch.replace('/', "-"))).display().to_string()
+}
+
+#[test]
+fn open_worktree_runs_setup_commands_after_creation_and_before_the_editor() {
+    let git = MockGit::new();
+    let config = test_worktree_config("code");
+    let (editor, setup, prompter) = (MockEditor::new(), MockWorktreeSetup::new(), MockPrompter::new());
+    let cmds = setup_cmds();
+    let env = WorktreeEnv { config: &config, editor: &editor, setup: &setup, commands: Some(&cmds) };
+
+    open_worktree(&git, &WorktreeContext { env: &env, prompter: &prompter }, "feature/x").unwrap();
+
+    let wt = worktree_for("feature/x");
+    assert!(prompter.calls().is_empty(), "setup commands run without asking");
+    assert_eq!(setup.calls(), vec![
+        format!("run:{wt}:/repos/beans-gitflow:fvm use"),
+        format!("run:{wt}:/repos/beans-gitflow:dart pub get"),
+    ]);
+    assert_eq!(editor.calls(), vec![format!("open:{wt}")]);
+    assert_eq!(git.calls().last().unwrap(), &format!("add_worktree:{wt}:feature/x"), "commands run after the worktree exists");
+}
+
+#[test]
+fn open_worktree_continues_after_a_failing_command() {
+    let git = MockGit::new();
+    let config = test_worktree_config("code");
+    let (editor, mut setup, prompter) = (MockEditor::new(), MockWorktreeSetup::new(), MockPrompter::new());
+    setup.fail.insert("fvm use".to_string());
+    let cmds = setup_cmds();
+    let env = WorktreeEnv { config: &config, editor: &editor, setup: &setup, commands: Some(&cmds) };
+
+    open_worktree(&git, &WorktreeContext { env: &env, prompter: &prompter }, "feature/x").unwrap();
+
+    assert_eq!(setup.calls().len(), 2, "a failing command does not stop the rest; calls: {:?}", setup.calls());
+    assert_eq!(editor.calls().len(), 1);
+}
+
+#[test]
+fn open_worktree_runs_nothing_without_a_setup_file() {
+    let git = MockGit::new();
+    let config = test_worktree_config("code");
+    let (editor, setup, prompter) = (MockEditor::new(), MockWorktreeSetup::new(), MockPrompter::new());
+    let env = WorktreeEnv { config: &config, editor: &editor, setup: &setup, commands: None };
+
+    open_worktree(&git, &WorktreeContext { env: &env, prompter: &prompter }, "feature/y").unwrap();
+
+    assert!(setup.calls().is_empty());
+    assert_eq!(editor.calls().len(), 1);
 }

@@ -105,15 +105,6 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_default() {
-        let dir = tmp_dir();
-        touch(&dir, "gflow-default.md");
-        let bt = BranchType::parse("feature/foo");
-        assert_eq!(resolve_in(&dir, &bt), Some(dir.join("gflow-default.md")));
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
     fn none_when_no_files() {
         let dir = tmp_dir();
         let bt = BranchType::parse("feature/foo");

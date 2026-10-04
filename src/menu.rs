@@ -687,11 +687,6 @@ mod tests {
     }
 
     #[test]
-    fn spaces_become_hyphens_as_you_type() {
-        assert_eq!(typed("passkey login"), "passkey-login");
-    }
-
-    #[test]
     fn consecutive_hyphens_collapse_however_they_were_typed() {
         assert_eq!(typed("passkey  login"), "passkey-login");
         assert_eq!(typed("passkey--login"), "passkey-login");

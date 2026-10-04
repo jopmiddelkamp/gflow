@@ -2,6 +2,7 @@ mod common;
 
 use common::{MockGit, MockHosting, MockVersionScript};
 use gflow::flows::finish_release::{bump_version, sync_with_develop, finish_release};
+use gflow::hosting::LandedPr;
 use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
 
 fn patch_cfg() -> RepoConfig {
@@ -1793,4 +1794,586 @@ fn release_cleanup_with_unlanded_tip_keeps_the_branch() {
 
     assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")),
         "an unlanded tip must never be deleted; calls: {:?}", git.calls());
+}
+
+#[test]
+fn a_release_without_a_staging_tag_stops_before_mutation() {
+    for (strategy, error) in [
+        (
+            BumpStrategy::Rc,
+            "No RC tag found on this release branch. Run 'gflow bump' first.",
+        ),
+        (
+            BumpStrategy::Patch,
+            "No version tag found on this release branch. Run 'gflow bump' first.",
+        ),
+    ] {
+        let git = MockGit::new();
+        let hosting = MockHosting::new();
+        let cfg = RepoConfig {
+            bump_strategy: strategy,
+            ..RepoConfig::default()
+        };
+        assert_eq!(
+            finish_release(&git, &hosting, &cfg, 1, 2, "main", None, false).unwrap_err(),
+            error
+        );
+        assert_eq!(git.calls(), ["tags_on_branch:release/1.2.0"]);
+        assert!(hosting.calls().is_empty());
+    }
+}
+
+#[test]
+fn refreshing_a_finish_branch_conflict_preserves_the_source_and_stops_publication() {
+    let mut git = MockGit::new();
+    git.tags_on_branch = vec!["v1.2.0-rc.1".into()];
+    git.existing_local_branches
+        .insert("finish/release-1.2.0-into-main".into());
+    git.fail_nth_merge = Some(1);
+    let hosting = MockHosting::new();
+    let cfg = RepoConfig {
+        mode: Mode::Protected,
+        ..RepoConfig::default()
+    };
+
+    let error = finish_release(&git, &hosting, &cfg, 1, 2, "main", None, false).unwrap_err();
+
+    assert!(
+        error.contains("git merge --abort && git switch release/1.2.0"),
+        "{error}"
+    );
+    assert!(error.contains("gflow finish"), "{error}");
+    assert_eq!(
+        git.calls().last().unwrap(),
+        "merge:release/1.2.0:chore: refresh finish/release-1.2.0-into-main with release/1.2.0"
+    );
+    assert!(!hosting
+        .calls()
+        .iter()
+        .any(|call| call.starts_with("create_or_get_pr:")));
+    assert!(!git
+        .calls()
+        .iter()
+        .any(|call| call.starts_with("delete_branch_local:")
+            || call.starts_with("delete_branch_remote:")
+            || call.starts_with("push:finish/")));
+}
+
+#[test]
+fn a_landing_pr_uses_its_explicit_template() {
+    let mut git = MockGit::new();
+    git.tags_on_branch = vec!["v1.2.0-rc.1".into()];
+    let hosting = MockHosting::new();
+    let cfg = RepoConfig {
+        mode: Mode::Protected,
+        ..RepoConfig::default()
+    };
+
+    finish_release(
+        &git,
+        &hosting,
+        &cfg,
+        1,
+        2,
+        "main",
+        Some(std::path::Path::new("landing.md")),
+        false,
+    )
+    .unwrap();
+
+    assert!(hosting.calls().iter().any(|call| call ==
+        "create_or_get_pr:finish/release-1.2.0-into-main:main:chore: merge release 1.2.0 into main:template=landing.md"),
+        "{:?}", hosting.calls());
+}
+
+fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected git failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        git.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn assert_hosting_failure(result: Result<(), String>, hosting: &MockHosting, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected hosting failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        hosting.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn any_landed_pr() -> LandedPr {
+    LandedPr {
+        url: "https://example.com/pr/1".into(),
+        head_sha: "headsha".into(),
+        merge_commit_sha: "merged".into(),
+    }
+}
+
+fn protected_cfg_with_strategy(strategy: BumpStrategy) -> RepoConfig {
+    RepoConfig {
+        mode: Mode::Protected,
+        bump_strategy: strategy,
+        ..RepoConfig::default()
+    }
+}
+
+fn release_git() -> MockGit {
+    let mut git = MockGit::new();
+    git.current_branch = "release/1.1.0".into();
+    git.tags_on_branch = vec!["v1.1.0-rc.1".into()];
+    git.existing_local_branches.insert("release/1.1.0".into());
+    git.existing_remote_branches.insert("release/1.1.0".into());
+    git.pushed_branches.insert("release/1.1.0".into());
+    git
+}
+
+fn landed_release() -> (MockGit, MockHosting) {
+    let mut git = release_git();
+    let mut hosting = MockHosting::new();
+    for target in ["main", "develop"] {
+        hosting
+            .merged_prs_to
+            .insert(("release/1.1.0".into(), target.into()), any_landed_pr());
+        git.ancestors
+            .insert(("merged".into(), format!("origin/{target}")));
+    }
+    git.parent_counts.insert("merged".into(), 2);
+    (git, hosting)
+}
+
+#[test]
+fn free_bump_stops_when_git_cannot_validate_commit_or_publish() {
+    for (strategy, call, occurrence) in [
+        (BumpStrategy::Rc, "tags_on_branch:release/1.1.0", 1),
+        (BumpStrategy::Patch, "tags_on_branch:release/1.1.0", 1),
+        (BumpStrategy::Rc, "is_working_tree_clean", 1),
+        (BumpStrategy::Rc, "is_working_tree_clean", 2),
+        (BumpStrategy::Rc, "stage_all", 1),
+        (BumpStrategy::Rc, "push:release/1.1.0", 1),
+    ] {
+        let mut git = release_git();
+        git.working_tree_clean_seq.get_mut().extend([true, false]);
+        git.fail_call = Some((call.into(), occurrence));
+        let cfg = RepoConfig {
+            bump_strategy: strategy,
+            ..RepoConfig::default()
+        };
+        let result = bump_version(
+            &git,
+            &MockHosting::new(),
+            Some(&MockVersionScript::new()),
+            &cfg,
+            1,
+            1,
+        );
+        assert_git_failure(result, &git, call);
+        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag:")));
+    }
+    for call in [
+        "create_tag:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2",
+        "push_tag:v1.1.0-rc.2",
+    ] {
+        let mut git = release_git();
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            bump_version(
+                &git,
+                &MockHosting::new(),
+                None,
+                &RepoConfig::default(),
+                1,
+                1,
+            ),
+            &git,
+            call,
+        );
+    }
+}
+
+#[test]
+fn protected_bump_stops_after_failed_merged_version_step() {
+    for call in [
+        "tags_on_branch:release/1.1.0",
+        "tag_commit_sha:v1.1.0-rc.1",
+        "create_tag_at:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2:merged",
+        "push_tag:v1.1.0-rc.2",
+        "local_branch_exists:release-chore/1.1.0/set-version",
+    ] {
+        let mut git = release_git();
+        git.tag_commits
+            .insert("v1.1.0-rc.1".into(), "previous".into());
+        git.fail_call = Some((call.into(), 1));
+        let mut hosting = MockHosting::new();
+        hosting.merged_prs_to.insert(
+            (
+                "release-chore/1.1.0/set-version".into(),
+                "release/1.1.0".into(),
+            ),
+            any_landed_pr(),
+        );
+        let result = bump_version(&git, &hosting, None, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1);
+        assert_git_failure(result, &git, call);
+        assert!(!hosting
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_or_get_pr:")));
+    }
+}
+
+#[test]
+fn protected_bump_stops_when_consumed_version_cleanup_fails() {
+    let call = "local_branch_exists:release-chore/1.1.0/set-version";
+    let mut git = release_git();
+    git.tag_commits
+        .insert("v1.1.0-rc.1".into(), "merged".into());
+    git.fail_call = Some((call.into(), 1));
+    let mut hosting = MockHosting::new();
+    hosting.merged_prs_to.insert(
+        (
+            "release-chore/1.1.0/set-version".into(),
+            "release/1.1.0".into(),
+        ),
+        any_landed_pr(),
+    );
+    assert_git_failure(
+        bump_version(&git, &hosting, None, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1),
+        &git,
+        call,
+    );
+    assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
+}
+
+#[test]
+fn protected_bump_stops_before_any_git_change_when_hosting_lookup_fails() {
+    let call = "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0";
+    let git = release_git();
+    let mut hosting = MockHosting::new();
+    hosting.fail_call = Some((call.into(), 1));
+    assert_hosting_failure(
+        bump_version(&git, &hosting, None, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1),
+        &hosting,
+        call,
+    );
+    assert!(git.calls().is_empty());
+}
+
+#[test]
+fn protected_bump_requires_readable_tags_for_direct_and_scripted_patch_bumps() {
+    for script in [None, Some(MockVersionScript::new())] {
+        let call = "tags_on_branch:release/1.1.0";
+        let mut git = release_git();
+        git.fail_call = Some((call.into(), 1));
+        let result = bump_version(
+            &git,
+            &MockHosting::new(),
+            script
+                .as_ref()
+                .map(|s| s as &dyn gflow::version_script::VersionScript),
+            &protected_cfg_with_strategy(BumpStrategy::Patch),
+            1,
+            1,
+        );
+        assert_git_failure(result, &git, call);
+    }
+}
+
+#[test]
+fn protected_bump_stops_after_failed_scripted_version_step() {
+    for call in [
+        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "is_working_tree_clean",
+        "local_branch_exists:release-chore/1.1.0/set-version",
+        "delete_branch_local:release-chore/1.1.0/set-version",
+        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "push:release-chore/1.1.0/set-version",
+        "checkout:release/1.1.0",
+    ] {
+        let mut git = release_git();
+        git.existing_local_branches
+            .insert("release-chore/1.1.0/set-version".into());
+        git.working_tree_clean_seq.get_mut().extend([true, false]);
+        git.fail_call = Some((call.into(), 1));
+        let result = bump_version(
+            &git,
+            &MockHosting::new(),
+            Some(&MockVersionScript::new()),
+            &protected_cfg_with_strategy(BumpStrategy::Rc),
+            1,
+            1,
+        );
+        assert_git_failure(result, &git, call);
+        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
+    }
+}
+
+#[test]
+fn protected_bump_does_not_tag_when_noop_script_cleanup_fails() {
+    for call in [
+        "checkout:release/1.1.0",
+        "delete_branch_local:release-chore/1.1.0/set-version",
+        "tags_on_branch:release/1.1.0",
+    ] {
+        let mut git = release_git();
+        git.fail_call = Some((call.into(), 1));
+        let result = bump_version(
+            &git,
+            &MockHosting::new(),
+            Some(&MockVersionScript::new()),
+            &protected_cfg_with_strategy(BumpStrategy::Rc),
+            1,
+            1,
+        );
+        assert_git_failure(result, &git, call);
+        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
+    }
+}
+
+#[test]
+fn protected_bump_does_not_tag_after_version_pr_creation_fails() {
+    for reuse in [false, true] {
+        let call = "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0";
+        let mut git = release_git();
+        if reuse {
+            git.existing_remote_branches
+                .insert("release-chore/1.1.0/set-version".into());
+        }
+        git.working_tree_clean_seq.get_mut().extend([true, false]);
+        let mut hosting = MockHosting::new();
+        hosting.fail_call = Some((call.into(), 1));
+        let result = bump_version(
+            &git,
+            &hosting,
+            Some(&MockVersionScript::new()),
+            &protected_cfg_with_strategy(BumpStrategy::Rc),
+            1,
+            1,
+        );
+        assert_hosting_failure(result, &hosting, call);
+        assert!(!git
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_tag") || c.starts_with("checkout:")));
+    }
+}
+
+#[test]
+fn free_sync_stops_after_each_failed_git_step() {
+    for call in [
+        "current_branch",
+        "checkout:develop",
+        "ff_merge:origin/develop",
+        "merge:release/1.1.0:chore: sync release 1.1.0 with develop",
+        "push:develop",
+        "checkout:release/1.1.0",
+    ] {
+        let mut git = release_git();
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            sync_with_develop(
+                &git,
+                &MockHosting::new(),
+                &RepoConfig::default(),
+                1,
+                1,
+                None,
+                false,
+            ),
+            &git,
+            call,
+        );
+    }
+}
+
+#[test]
+fn free_release_stops_after_each_failed_finish_step() {
+    for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
+        let mut calls = vec![
+            "tags_on_branch:release/1.1.0",
+            "is_ancestor:release/1.1.0:main",
+            "is_pushed:main",
+            "remote_tag_exists:v1.1.0",
+            "is_pushed:develop",
+            "is_linked_worktree",
+        ];
+        if strategy == BumpStrategy::Rc {
+            calls.extend([
+                "rev_list_count:v1.1.0-rc.1:release/1.1.0",
+                "tag_exists:v1.1.0",
+            ]);
+        }
+        for call in calls {
+            let mut git = release_git();
+            if strategy == BumpStrategy::Patch {
+                git.tags_on_branch = vec!["v1.1.0".into()];
+                git.existing_tags.insert("v1.1.0".into());
+            }
+            git.fail_call = Some((call.into(), 1));
+            let cfg = RepoConfig {
+                bump_strategy: strategy,
+                ..RepoConfig::default()
+            };
+            assert_git_failure(
+                finish_release(&git, &MockHosting::new(), &cfg, 1, 1, "main", None, false),
+                &git,
+                call,
+            );
+        }
+    }
+}
+
+#[test]
+fn protected_release_does_not_publish_when_staging_checks_fail() {
+    for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
+        let count_call = match strategy {
+            BumpStrategy::Rc => "rev_list_count:v1.1.0-rc.1:release/1.1.0",
+            BumpStrategy::Patch => "rev_list_count:v1.1.0:release/1.1.0",
+        };
+        for call in [
+            "tags_on_branch:release/1.1.0",
+            count_call,
+            "remote_branch_exists:release/1.1.0",
+        ] {
+            let mut git = release_git();
+            if strategy == BumpStrategy::Patch {
+                git.tags_on_branch = vec!["v1.1.0".into()];
+                git.existing_tags.insert("v1.1.0".into());
+            }
+            git.fail_call = Some((call.into(), 1));
+            let hosting = MockHosting::new();
+            assert_git_failure(
+                finish_release(
+                    &git,
+                    &hosting,
+                    &protected_cfg_with_strategy(strategy),
+                    1,
+                    1,
+                    "main",
+                    None,
+                    false,
+                ),
+                &git,
+                call,
+            );
+            assert!(!hosting
+                .calls()
+                .iter()
+                .any(|c| c.starts_with("create_or_get_pr:")));
+            assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        }
+    }
+}
+
+#[test]
+fn protected_release_stops_after_failed_main_pr_creation() {
+    for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
+        let mut git = release_git();
+        if strategy == BumpStrategy::Patch {
+            git.tags_on_branch = vec!["v1.1.0".into()];
+            git.existing_tags.insert("v1.1.0".into());
+        }
+        let mut hosting = MockHosting::new();
+        let call = "create_or_get_pr:finish/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body";
+        hosting.fail_call = Some((call.into(), 1));
+        assert_hosting_failure(
+            finish_release(
+                &git,
+                &hosting,
+                &protected_cfg_with_strategy(strategy),
+                1,
+                1,
+                "main",
+                None,
+                false,
+            ),
+            &hosting,
+            call,
+        );
+        assert!(!git
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_tag") || c.starts_with("delete_branch")));
+    }
+}
+
+#[test]
+fn protected_release_stops_after_failed_landed_finish_step() {
+    for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
+        let mut failures = vec![
+            ("remote_tag_exists:v1.1.0", 1),
+            ("branch_sha:release/1.1.0", 1),
+            ("branch_sha:release/1.1.0", 2),
+            ("branch_sha:release/1.1.0", 3),
+            ("list_branches_matching:finish/release-1.1.0-into-*", 1),
+        ];
+        if strategy == BumpStrategy::Rc {
+            failures.push(("tag_exists:v1.1.0", 1));
+        } else {
+            failures.push(("tags_on_branch:release/1.1.0", 1));
+        }
+        for (call, occurrence) in failures {
+            let (mut git, hosting) = landed_release();
+            if strategy == BumpStrategy::Patch {
+                git.tags_on_branch = vec!["v1.1.0".into()];
+                git.existing_tags.insert("v1.1.0".into());
+            }
+            git.fail_call = Some((call.into(), occurrence));
+            assert_git_failure(
+                finish_release(
+                    &git,
+                    &hosting,
+                    &protected_cfg_with_strategy(strategy),
+                    1,
+                    1,
+                    "main",
+                    None,
+                    false,
+                ),
+                &git,
+                call,
+            );
+            assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        }
+    }
+}
+
+#[test]
+fn protected_release_stops_if_existing_tag_cannot_be_verified_or_pushed() {
+    for call in [
+        "tag_commit_sha:v1.1.0",
+        "is_ancestor:merged:origin/main",
+        "remote_tag_exists:v1.1.0",
+    ] {
+        let mut git = release_git();
+        git.existing_tags.insert("v1.1.0".into());
+        git.tag_commits.insert("v1.1.0".into(), "merged".into());
+        git.ancestors
+            .insert(("merged".into(), "origin/main".into()));
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            finish_release(
+                &git,
+                &MockHosting::new(),
+                &protected_cfg_with_strategy(BumpStrategy::Rc),
+                1,
+                1,
+                "main",
+                None,
+                false,
+            ),
+            &git,
+            call,
+        );
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+    }
 }

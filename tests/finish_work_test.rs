@@ -704,3 +704,238 @@ fn finish_branches_are_never_offered_as_pr_target() {
     assert!(hosting.calls()[1].starts_with("create_or_get_pr:feature/login:develop:"),
         "finish/* must never be a PR target, got: {}", hosting.calls()[1]);
 }
+
+fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected git failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        git.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn assert_hosting_failure(result: Result<(), String>, hosting: &MockHosting, call: &str) {
+    let error = result.expect_err(call);
+    assert!(
+        error.contains(&format!("injected hosting failure: {call}")),
+        "{error}"
+    );
+    assert_eq!(
+        hosting.calls().last().map(String::as_str),
+        Some(call),
+        "calls continue after {error}"
+    );
+}
+
+fn completed_work() -> MockHosting {
+    let mut hosting = MockHosting::new();
+    hosting.merged_pr = Some(MergedPr {
+        url: "https://example.com/pr/1".into(),
+        head_sha: "headsha".into(),
+        merge_commit_sha: "merged".into(),
+        base: "develop".into(),
+    });
+    hosting
+}
+
+fn work_git() -> MockGit {
+    let mut git = MockGit::new();
+    git.current_branch = "feature/example".into();
+    git.existing_local_branches.insert("feature/example".into());
+    git.existing_remote_branches
+        .insert("feature/example".into());
+    git.existing_remote_branches.insert("develop".into());
+    git.parent_counts.insert("merged".into(), 1);
+    git
+}
+
+#[test]
+fn work_finish_stops_after_failed_cleanup_step() {
+    for linked_worktree in [false, true] {
+        let mut failures = vec![
+            "head_sha",
+            "commit_parent_count:merged",
+            "remote_branch_exists:feature/example",
+            "delete_branch_remote:feature/example",
+            "is_linked_worktree",
+            "delete_branch_local:feature/example",
+        ];
+        if linked_worktree {
+            failures.extend(["detach_head", "remove_current_worktree"]);
+        } else {
+            failures.push("checkout:develop");
+        }
+        for call in failures {
+            let mut git = work_git();
+            git.linked_worktree = linked_worktree;
+            git.fail_call = Some((call.into(), 1));
+            let hosting = completed_work();
+            let result = finish_work_branch(
+                &git,
+                &hosting,
+                &MockPrompter::new(),
+                &BranchType::parse("feature/example"),
+                None,
+                None,
+                None,
+                false,
+            );
+            assert_git_failure(result, &git, call);
+            assert_eq!(hosting.calls(), ["merged_pr:feature/example"]);
+        }
+    }
+}
+
+#[test]
+fn work_finish_stops_before_pr_creation_after_failed_validation_or_push() {
+    for call in [
+        "current_branch",
+        "remote_branch_exists:develop",
+        "push:feature/example",
+    ] {
+        let mut git = work_git();
+        git.fail_call = Some((call.into(), 1));
+        let hosting = MockHosting::new();
+        let result = finish_work_branch(
+            &git,
+            &hosting,
+            &MockPrompter::new(),
+            &BranchType::parse("feature/example"),
+            Some(false),
+            Some("develop".into()),
+            None,
+            false,
+        );
+        assert_git_failure(result, &git, call);
+        assert!(!hosting
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("create_or_get_pr:")));
+    }
+}
+
+#[test]
+fn work_finish_stops_after_hosting_errors() {
+    for call in [
+        "merged_pr:feature/example",
+        "create_or_get_pr:feature/example:develop:feat: example",
+    ] {
+        let git = work_git();
+        let mut hosting = MockHosting::new();
+        hosting.fail_call = Some((call.into(), 1));
+        let result = finish_work_branch(
+            &git,
+            &hosting,
+            &MockPrompter::new(),
+            &BranchType::parse("feature/example"),
+            Some(false),
+            Some("develop".into()),
+            None,
+            false,
+        );
+        assert_hosting_failure(result, &hosting, call);
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+    }
+}
+
+#[test]
+fn work_finish_stops_before_push_if_parent_detection_fails() {
+    let mut git = work_git();
+    let call = "list_remote_branches";
+    git.fail_call = Some((call.into(), 1));
+    let result = finish_work_branch(
+        &git,
+        &MockHosting::new(),
+        &MockPrompter::new(),
+        &BranchType::parse("feature/example"),
+        Some(false),
+        None,
+        None,
+        false,
+    );
+    assert_git_failure(result, &git, call);
+    assert!(!git.calls().iter().any(|c| c.starts_with("push:")));
+}
+
+#[test]
+fn work_finish_stops_before_push_when_either_prompt_is_aborted() {
+    for branches in [vec![], vec!["develop".into(), "feature/parent".into()]] {
+        let mut git = work_git();
+        git.remote_branches = branches;
+        let hosting = MockHosting::new();
+        let result = finish_work_branch(
+            &git,
+            &hosting,
+            &MockPrompter::aborting(),
+            &BranchType::parse("feature/example"),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(result, Err("Aborted".into()));
+        assert!(!git.calls().iter().any(|c| c.starts_with("push:")));
+        assert_eq!(hosting.calls(), ["merged_pr:feature/example"]);
+    }
+}
+
+#[test]
+fn work_finish_rejects_branches_without_a_work_commit_type_before_git_calls() {
+    for branch in [
+        "main",
+        "develop",
+        "release/1.1.0",
+        "hotfix/1.1.1",
+        "release-fix/1.1.0/example",
+        "release-chore/1.1.0/example",
+        "hotfix-fix/1.1.1/example",
+        "unknown",
+    ] {
+        let git = MockGit::new();
+        let result = finish_work_branch(
+            &git,
+            &MockHosting::new(),
+            &MockPrompter::new(),
+            &BranchType::parse(branch),
+            None,
+            None,
+            None,
+            false,
+        );
+        assert_eq!(
+            result,
+            Err("Cannot finish: not on a work branch".into()),
+            "{branch}"
+        );
+        assert!(git.calls().is_empty(), "{branch}");
+    }
+}
+
+#[test]
+fn fix_finish_stops_when_current_branch_or_merged_status_cannot_be_read() {
+    let mut git = MockGit::new();
+    git.current_branch = "release-fix/1.1.0/example".into();
+    let kind = BranchType::parse(&git.current_branch);
+    git.fail_call = Some(("current_branch".into(), 1));
+    assert_git_failure(
+        finish_release_fix(&git, &MockHosting::new(), &kind, None, false),
+        &git,
+        "current_branch",
+    );
+
+    let mut git = MockGit::new();
+    git.current_branch = "release-fix/1.1.0/example".into();
+    let mut hosting = MockHosting::new();
+    let call = "merged_pr:release-fix/1.1.0/example";
+    hosting.fail_call = Some((call.into(), 1));
+    assert_hosting_failure(
+        finish_release_fix(&git, &hosting, &kind, None, false),
+        &hosting,
+        call,
+    );
+    assert_eq!(git.calls(), ["current_branch"]);
+}

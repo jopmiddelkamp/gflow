@@ -30,55 +30,22 @@ fn finish_actions_return_false() {
 }
 
 #[test]
-fn no_checkout_returns_true_for_start_work_branch() {
-    let action = Action::StartWorkBranch {
-        prefix: "feature".into(),
-        name: "x".into(),
-        from: "develop".into(),
-        no_checkout: true,
-        no_worktree: false,
-    };
-    assert!(action.no_checkout());
-}
-
-#[test]
-fn no_checkout_returns_false_for_start_work_branch_default() {
-    let action = Action::StartWorkBranch {
-        prefix: "feature".into(),
-        name: "x".into(),
-        from: "develop".into(),
-        no_checkout: false,
-        no_worktree: false,
-    };
-    assert!(!action.no_checkout());
-}
-
-#[test]
-fn no_checkout_returns_true_for_start_release_fix() {
-    let action = Action::StartReleaseFix { name: "x".into(), no_checkout: true, no_worktree: false };
-    assert!(action.no_checkout());
-}
-
-#[test]
-fn no_checkout_returns_true_for_start_hotfix_fix() {
-    let action = Action::StartHotfixFix { name: "x".into(), no_checkout: true, no_worktree: false };
-    assert!(action.no_checkout());
-}
-
-#[test]
-fn no_checkout_returns_false_for_non_start_actions() {
-    let actions: Vec<Action> = vec![
-        Action::StartRelease { release_type: None, no_worktree: false },
-        Action::FinishWorkBranch { breaking: None, base: None },
-        Action::FinishReleaseFix,
-        Action::FinishRelease,
-        Action::FinishHotfix,
-        Action::FinishHotfixFix,
-        Action::BumpVersion,
-        Action::SyncWithDevelop,
-    ];
-    for action in actions {
-        assert!(!action.no_checkout(), "Expected no_checkout() == false for {:?}", action);
+fn no_checkout_flag_is_honored_by_every_start_action() {
+    for (case, action, expected) in [
+        ("start_work_branch_no_checkout", Action::StartWorkBranch { prefix: "feature".into(), name: "x".into(), from: "develop".into(), no_checkout: true, no_worktree: false }, true),
+        ("start_work_branch_default", Action::StartWorkBranch { prefix: "feature".into(), name: "x".into(), from: "develop".into(), no_checkout: false, no_worktree: false }, false),
+        ("start_release_fix_no_checkout", Action::StartReleaseFix { name: "x".into(), no_checkout: true, no_worktree: false }, true),
+        ("start_hotfix_fix_no_checkout", Action::StartHotfixFix { name: "x".into(), no_checkout: true, no_worktree: false }, true),
+        ("start_release", Action::StartRelease { release_type: None, no_worktree: false }, false),
+        ("finish_work_branch", Action::FinishWorkBranch { breaking: None, base: None }, false),
+        ("finish_release_fix", Action::FinishReleaseFix, false),
+        ("finish_release", Action::FinishRelease, false),
+        ("finish_hotfix", Action::FinishHotfix, false),
+        ("finish_hotfix_fix", Action::FinishHotfixFix, false),
+        ("bump_version", Action::BumpVersion, false),
+        ("sync_with_develop", Action::SyncWithDevelop, false),
+    ] {
+        assert_eq!(action.no_checkout(), expected, "{case}: {action:?}");
     }
 }
 

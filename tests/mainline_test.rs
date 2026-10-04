@@ -35,39 +35,22 @@ fn an_unsupported_configured_value_is_a_hard_error_naming_the_key() {
 }
 
 #[test]
-fn an_unset_key_detects_main_and_saves_it_locally() {
-    let git = git_with_branches(&["main", "develop"], &[]);
+fn detection_prefers_main_then_master_then_defaults_to_main() {
+    let cases: [(&str, &[&str], &[&str], &str); 4] = [
+        ("an_unset_key_detects_main", &["main", "develop"], &[], "main"),
+        ("master_when_no_main_exists", &["master"], &[], "master"),
+        // A fresh clone that has not checked main out yet still has origin/main.
+        ("a_remote_main_wins_over_a_local_master", &["master"], &["main"], "main"),
+        ("neither_branch_defaults_to_main", &[], &[], "main"),
+    ];
+    for (case, local, remote, expected) in cases {
+        let git = git_with_branches(local, remote);
 
-    assert_eq!(resolve_main_branch(&git).unwrap(), "main");
-    assert!(git.calls().contains(&format!("set_config:local:{MAIN_BRANCH_KEY}:main")),
-        "the detected value must be persisted; calls: {:?}", git.calls());
-}
-
-#[test]
-fn an_unset_key_detects_master_when_no_main_exists() {
-    let git = git_with_branches(&["master"], &[]);
-
-    assert_eq!(resolve_main_branch(&git).unwrap(), "master");
-    assert!(git.calls().contains(&format!("set_config:local:{MAIN_BRANCH_KEY}:master")),
-        "calls: {:?}", git.calls());
-}
-
-#[test]
-fn detection_looks_at_remote_branches_too() {
-    // A fresh clone that has not checked main out yet still has origin/main.
-    let git = git_with_branches(&["master"], &["main"]);
-
-    assert_eq!(resolve_main_branch(&git).unwrap(), "main",
-        "main wins over master wherever it exists");
-}
-
-#[test]
-fn a_repo_with_neither_branch_defaults_to_main() {
-    let git = git_with_branches(&[], &[]);
-
-    assert_eq!(resolve_main_branch(&git).unwrap(), "main");
-    assert!(git.calls().contains(&format!("set_config:local:{MAIN_BRANCH_KEY}:main")),
-        "calls: {:?}", git.calls());
+        assert_eq!(resolve_main_branch(&git).unwrap_or_else(|error| panic!("{case}: {error}")), expected,
+            "{case}: main wins over master wherever it exists");
+        assert!(git.calls().contains(&format!("set_config:local:{MAIN_BRANCH_KEY}:{expected}")),
+            "{case}: the detected value must be persisted; calls: {:?}", git.calls());
+    }
 }
 
 #[test]
@@ -77,4 +60,23 @@ fn an_empty_configured_value_falls_back_to_detection() {
     git.config.insert(MAIN_BRANCH_KEY.to_string(), "  ".to_string());
 
     assert_eq!(resolve_main_branch(&git).unwrap(), "master");
+}
+
+#[test]
+fn mainline_lookup_failures_never_guess_or_persist_a_fallback() {
+    for failure in [
+        "get_config:gflow.branch.main",
+        "local_branch_exists:main",
+        "remote_branch_exists:main",
+        "set_config:local:gflow.branch.main:main",
+    ] {
+        let mut git = MockGit::new();
+        git.fail_call = Some((failure.into(), 1));
+
+        assert_eq!(
+            resolve_main_branch(&git).unwrap_err(),
+            format!("injected git failure: {failure}")
+        );
+        assert_eq!(git.calls().last().unwrap(), failure);
+    }
 }
