@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-10-04
+
+### Changed
+- gflow no longer checks `gh`/`az` and their login at startup. The first hosting call is the check, and a failure names the fix. On Azure DevOps this removes a wait of about 9 seconds before the menu opens.
+- Config migration from 4.0.x now saves the new config file before it removes the old `gflow.worktree.*` git keys. A failed save keeps your old settings, so the migration can retry.
+- The test suite now reaches 100% line, function and region coverage. Each `tests/` file is named after the module it tests, and a guard test enforces that.
+
 ## [4.3.1] - 2026-09-10
 
 ### Fixed
@@ -251,6 +258,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.1...v4.4.0
 [4.3.1]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.0...v4.3.1
 [4.3.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.2.0...v4.3.0
 [4.2.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.1.0...v4.2.0
