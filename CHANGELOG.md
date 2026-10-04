@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - gflow no longer checks `gh`/`az` and their login at startup. The first hosting call is the check, and a failure names the fix. On Azure DevOps this removes a wait of about 9 seconds before the menu opens.
 - Config migration from 4.0.x now saves the new config file before it removes the old `gflow.worktree.*` git keys. A failed save keeps your old settings, so the migration can retry.
+- The Chocolatey package now carries a copyright notice, which Chocolatey moderation requires.
 - The test suite now reaches 100% line, function and region coverage. Each `tests/` file is named after the module it tests, and a guard test enforces that.
 
 ## [4.3.1] - 2026-09-10
