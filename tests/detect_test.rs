@@ -57,3 +57,14 @@ fn a_devops_override_without_an_origin_remote_is_a_hard_error() {
 
     assert!(err.contains("could not be determined"), "got: {err}");
 }
+
+#[test]
+fn provider_detection_stops_when_the_override_cannot_be_read() {
+    let mut git = MockGit::new();
+    git.fail_call = Some(("get_config:gflow.hosting.provider".into(), 1));
+    assert_eq!(
+        detect(&git).unwrap_err(),
+        "injected git failure: get_config:gflow.hosting.provider"
+    );
+    assert_eq!(git.calls(), ["get_config:gflow.hosting.provider"]);
+}

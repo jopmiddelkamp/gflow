@@ -19,7 +19,7 @@ Broad, global rules only. Implementation-level decisions, extension recipes, and
 6. **Crash-safe by design.** Every multi-step mutating flow: validate before mutating, persist intent before the first side effect, make each step idempotent, support resume and abort.
 7. **Errors are terminal and user-facing.** `Result<T, String>`; every message names the exact next command to run. No error taxonomy, no panics (only documented `unreachable!` for enforced invariants).
 8. **One behavior, two interfaces.** Interactive menu and CLI subcommands resolve to the same `Action` — a feature exists in both or neither, and nothing downstream knows which interface ran.
-9. **Fully testable without side effects.** Every flow runs against mocks; tests never touch real git, the network, or installed CLIs.
+9. **Fully testable in isolation.** Flows use mocks. Adapter tests use temporary fake tools and isolated terminals, never real git, the network, or user applications.
 10. **Process is enforced in code, not documentation.** If a workflow rule matters (e.g. only RC-validated commits reach main), gflow refuses — it does not trust the operator.
 
 ## Layer Map

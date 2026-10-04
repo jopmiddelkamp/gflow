@@ -5,6 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "../tests/common/mod.rs"]
+pub(crate) mod mocks;
+
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Create a unique, empty temp directory. `prefix` names the test area (e.g.

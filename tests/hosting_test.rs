@@ -20,6 +20,19 @@ fn ado(runner: &MockCliRunner) -> AzureDevOps<'_> {
     AzureDevOps::new("beans".to_string(), "Shop".to_string(), "shop".to_string(), runner)
 }
 
+/// A scripted az whose one-time extension check passes, so a test scripts only
+/// the calls it is about.
+fn az_scripted(responses: &[Result<&str, &str>]) -> MockCliRunner {
+    let mut all = vec![Ok("azure-devops 1.0.0")];
+    all.extend_from_slice(responses);
+    MockCliRunner::scripted(&all)
+}
+
+/// The az calls after the extension check.
+fn az_calls(runner: &MockCliRunner) -> Vec<String> {
+    runner.calls().split_off(1)
+}
+
 // --- GitHub: create_or_get_pr ---
 
 #[test]
@@ -36,20 +49,6 @@ fn an_open_pr_is_reused_instead_of_creating_a_second_one() {
 }
 
 #[test]
-fn the_probe_filter_never_lets_a_missing_pr_become_a_url() {
-    // `.[0].url` over an empty list is jq null. Suppressing a null result is
-    // gh's output formatting, not a promised contract, and a "null" reaching
-    // the caller would be returned as the PR's URL — the landing PR silently
-    // never created. `// empty` makes emptiness the filter's own guarantee.
-    let runner = MockCliRunner::scripted(&[Ok(""), Ok("https://github.com/o/r/pull/12")]);
-
-    gh(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
-
-    let probe = &runner.calls()[0];
-    assert!(probe.ends_with("--jq .[0].url // empty"), "probe must coerce null to empty; got: {probe}");
-}
-
-#[test]
 fn no_existing_pr_creates_one_with_an_empty_body() {
     // gh pr list exits 0 with an empty result when the branch has no open PR
     // at all — that is the normal first-finish path.
@@ -61,8 +60,10 @@ fn no_existing_pr_creates_one_with_an_empty_body() {
     let url = gh(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
 
     assert_eq!(url, "https://github.com/o/r/pull/8");
-    assert_eq!(runner.calls()[1],
-        "gh pr create --head feature/x --base develop --title feat: x --body ");
+    assert_eq!(runner.calls(), vec![
+        "gh pr list --head feature/x --base develop --state open --limit 1 --json url --jq .[0].url // empty",
+        "gh pr create --head feature/x --base develop --title feat: x --body ",
+    ]);
 }
 
 #[test]
@@ -75,17 +76,6 @@ fn an_empty_body_pr_never_carries_a_body_file() {
 
     assert_eq!(runner.calls()[1],
         "gh pr create --head finish/hotfix-1.1.1-into-main --base main --title chore: merge hotfix 1.1.1 into main --body ");
-}
-
-#[test]
-fn a_closed_or_merged_pr_leads_to_a_fresh_one() {
-    // --state open excludes a closed/merged PR from the probe: the branch has
-    // new work, so a new PR is correct.
-    let runner = MockCliRunner::scripted(&[Ok(""), Ok("https://github.com/o/r/pull/9")]);
-
-    let url = gh(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
-
-    assert_eq!(url, "https://github.com/o/r/pull/9");
 }
 
 #[test]
@@ -128,7 +118,7 @@ fn an_open_pr_to_a_different_base_is_not_reused() {
         "gh pr list --head hotfix/1.2.4 --base release/1.2.0 --state open --limit 1 --json url --jq .[0].url // empty");
 }
 
-// --- GitHub: merged_pr and check_auth ---
+// --- GitHub: merged_pr ---
 
 #[test]
 fn merged_pr_asks_only_for_the_newest_pr_of_the_branch() {
@@ -180,27 +170,18 @@ fn a_merged_pr_to_lookup_failure_names_the_auth_fix() {
     assert!(err.contains("gh auth login"), "got: {err}");
 }
 
-#[test]
-fn github_auth_check_runs_gh_auth_status() {
-    let runner = MockCliRunner::scripted(&[Ok("Logged in to github.com")]);
-
-    gh(&runner).check_auth().unwrap();
-
-    assert_eq!(runner.calls(), vec!["gh auth status"]);
-}
-
 // --- Azure DevOps ---
 
 #[test]
 fn an_active_ado_pr_is_reused_and_its_url_synthesized() {
     // az's webUrl is unreliable, so the URL is built from the parsed coordinates.
-    let runner = MockCliRunner::scripted(&[Ok("2662")]);
+    let runner = az_scripted(&[Ok("2662")]);
 
     let url = ado(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
 
     assert_eq!(url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/2662");
-    assert_eq!(runner.calls().len(), 1, "no create call may follow");
-    let call = &runner.calls()[0];
+    assert_eq!(az_calls(&runner).len(), 1, "no create call may follow");
+    let call = &az_calls(&runner)[0];
     assert!(call.contains("--status active"), "only an open PR may be reused; got: {call}");
     assert!(call.contains("--organization https://dev.azure.com/beans --project Shop --repository shop"),
         "every az call carries the repo coordinates; got: {call}");
@@ -208,19 +189,19 @@ fn an_active_ado_pr_is_reused_and_its_url_synthesized() {
 
 #[test]
 fn no_active_ado_pr_creates_one() {
-    let runner = MockCliRunner::scripted(&[Ok(""), Ok("2663")]);
+    let runner = az_scripted(&[Ok(""), Ok("2663")]);
 
     let url = ado(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
 
     assert_eq!(url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/2663");
-    let call = &runner.calls()[1];
+    let call = &az_calls(&runner)[1];
     assert!(call.starts_with("az repos pr create"), "got: {call}");
     assert!(call.contains("--description"), "az always receives a description; got: {call}");
 }
 
 #[test]
 fn an_unreadable_pr_template_is_a_hard_error_naming_the_path() {
-    let runner = MockCliRunner::scripted(&[Ok("")]);
+    let runner = az_scripted(&[Ok("")]);
 
     let err = ado(&runner)
         .create_or_get_pr("feature/x", "develop", "feat: x", PrBody::File("/definitely/not/here.md"))
@@ -232,14 +213,14 @@ fn an_unreadable_pr_template_is_a_hard_error_naming_the_path() {
 
 #[test]
 fn ado_merged_pr_queries_the_newest_pr_of_any_status() {
-    let runner = MockCliRunner::scripted(&[Ok("completed\tabc123\tdeadbeef\trefs/heads/develop\t49")]);
+    let runner = az_scripted(&[Ok("completed\tabc123\tdeadbeef\trefs/heads/develop\t49")]);
 
     let pr = ado(&runner).merged_pr("feature/x").unwrap().unwrap();
 
     assert_eq!(pr.url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/49");
     assert_eq!(pr.head_sha, "abc123");
     assert_eq!(pr.merge_commit_sha, "deadbeef");
-    let call = &runner.calls()[0];
+    let call = &az_calls(&runner)[0];
     assert!(call.contains("--status all"), "got: {call}");
     // The `[0:1]` slice, not `[0]`: a multiselect on a plain index is a flat list
     // of scalars, which az's tsv writer prints one value per line. Only a list of
@@ -250,7 +231,7 @@ fn ado_merged_pr_queries_the_newest_pr_of_any_status() {
 
 #[test]
 fn ado_merged_pr_to_filters_by_source_and_target_branch() {
-    let runner = MockCliRunner::scripted(&[Ok("completed\tabc123\tdeadbeef\t49")]);
+    let runner = az_scripted(&[Ok("completed\tabc123\tdeadbeef\t49")]);
 
     let pr = ado(&runner).merged_pr_to("feature/x", "develop").unwrap().unwrap();
 
@@ -260,7 +241,7 @@ fn ado_merged_pr_to_filters_by_source_and_target_branch() {
     // `--status completed`, not `all`: a newer active or abandoned PR must not
     // erase the fact that this leg already landed.
     assert_eq!(
-        runner.calls()[0],
+        az_calls(&runner)[0],
         "az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
 --source-branch feature/x --target-branch develop --status completed \
 --query [0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"
@@ -268,26 +249,39 @@ fn ado_merged_pr_to_filters_by_source_and_target_branch() {
 }
 
 #[test]
-fn ado_auth_check_verifies_the_extension_before_probing_the_repo() {
-    // The extension check comes first: it also prevents az's interactive
-    // dynamic-install prompt from firing inside a later non-tty command.
-    let runner = MockCliRunner::scripted(&[Ok("azure-devops 1.0.0"), Ok("repo-id")]);
+fn the_ado_extension_is_verified_once_before_the_first_az_call() {
+    // Without the extension, az answers a repos command with an interactive
+    // install prompt, hidden behind the captured output — gflow would hang.
+    let runner = MockCliRunner::scripted(&[Ok("azure-devops 1.0.0"), Ok(""), Ok("")]);
+    let ado = ado(&runner);
 
-    ado(&runner).check_auth().unwrap();
+    ado.merged_pr("feature/x").unwrap();
+    ado.open_pr_to("feature/x", "develop").unwrap();
 
-    assert_eq!(runner.calls()[0], "az extension show --name azure-devops");
-    assert!(runner.calls()[1].starts_with("az repos show"),
-        "repo access is probed directly, not via `az account show`; got: {}", runner.calls()[1]);
+    let calls = runner.calls();
+    assert_eq!(calls[0], "az extension show --name azure-devops");
+    assert_eq!(calls.len(), 3, "the extension is checked once per run; got: {calls:?}");
+    assert!(calls[1].starts_with("az repos pr list") && calls[2].starts_with("az repos pr list"), "got: {calls:?}");
 }
 
 #[test]
-fn a_missing_ado_extension_names_the_install_command() {
+fn a_missing_ado_extension_stops_before_any_repo_call() {
     let runner = MockCliRunner::scripted(&[Err("az extension show failed: not installed")]);
 
-    let err = ado(&runner).check_auth().unwrap_err();
+    let err = ado(&runner).merged_pr("feature/x").unwrap_err();
 
     assert!(err.contains("az extension add --name azure-devops"), "got: {err}");
-    assert_eq!(runner.calls().len(), 1, "the repo probe must not run without the extension");
+    assert_eq!(runner.calls().len(), 1, "no repo call may run without the extension");
+}
+
+#[test]
+fn a_failed_az_call_names_the_login_commands() {
+    let runner = MockCliRunner::scripted(&[Ok("azure-devops 1.0.0"), Err("az repos pr list failed: TF400813: not authorized")]);
+
+    let err = ado(&runner).merged_pr("feature/x").unwrap_err();
+
+    assert!(err.contains("TF400813"), "the az reason stays visible; got: {err}");
+    assert!(err.contains("az login") && err.contains("az devops login"), "must name the next command; got: {err}");
 }
 
 // --- open_pr_to (legacy-PR detection for finish-branch migration) ---
@@ -313,34 +307,96 @@ fn gh_open_pr_to_empty_result_is_none() {
 
 #[test]
 fn az_open_pr_to_lists_active_prs_and_synthesizes_the_url() {
-    let runner = MockCliRunner::scripted(&[Ok("61")]);
+    let runner = az_scripted(&[Ok("61")]);
 
     let url = ado(&runner).open_pr_to("release/1.2.0", "develop").unwrap().unwrap();
 
     assert!(url.ends_with("/pullrequest/61"), "got: {url}");
-    let call = &runner.calls()[0];
+    let call = &az_calls(&runner)[0];
     assert!(call.contains("--source-branch release/1.2.0") && call.contains("--target-branch develop")
         && call.contains("--status active") && call.contains("[0].pullRequestId"), "got: {call}");
 }
 
 #[test]
 fn az_open_pr_to_empty_result_is_none() {
-    let runner = MockCliRunner::scripted(&[Ok("")]);
+    let runner = az_scripted(&[Ok("")]);
     assert_eq!(ado(&runner).open_pr_to("release/1.2.0", "develop").unwrap(), None);
 }
 
 #[test]
-fn az_malformed_merged_pr_row_is_an_error_not_a_silent_none() {
-    // A row that isn't the expected 5-field tsv means the az query changed
-    // shape — surfacing it beats guessing at merge state.
-    let runner = MockCliRunner::scripted(&[Ok("garbage-without-tabs")]);
-    let err = ado(&runner).merged_pr("feature/x").unwrap_err();
-    assert!(err.contains("Unexpected merged-PR data"), "got: {err}");
+fn github_open_pr_failure_keeps_the_authentication_remedy() {
+    let runner = MockCliRunner::scripted(&[Err("HTTP 401")]);
+    let error = GitHub::new(&runner)
+        .open_pr_to("release/1.0.0", "main")
+        .unwrap_err();
+    assert!(error.contains("Could not check for an open PR: HTTP 401"));
+    assert!(error.contains("gh auth login"));
 }
 
 #[test]
-fn az_malformed_merged_pr_to_row_is_an_error_not_a_silent_none() {
-    let runner = MockCliRunner::scripted(&[Ok("completed\tonly-two")]);
-    let err = ado(&runner).merged_pr_to("feature/x", "develop").unwrap_err();
-    assert!(err.contains("Unexpected merged-PR data"), "got: {err}");
+fn azure_create_rejects_failed_or_invalid_responses() {
+    for responses in [
+        vec![Ok("extension"), Err("list unavailable")],
+        vec![Ok("extension"), Ok("None")],
+        vec![Ok("extension"), Ok(""), Err("create unavailable")],
+        vec![Ok("extension"), Ok(""), Ok("None")],
+    ] {
+        let runner = MockCliRunner::scripted(&responses);
+        let hosting = AzureDevOps::new("org".into(), "project".into(), "repo".into(), &runner);
+        let error = hosting
+            .create_or_get_pr("feature/x", "develop", "feat: x", PrBody::Empty)
+            .unwrap_err();
+        let last = responses.last().unwrap();
+        match last {
+            Ok(_) => assert!(error.contains("Unexpected az pull request id: 'None'")),
+            Err(reason) => {
+                assert!(error.contains(reason));
+                assert!(error.contains("az login"));
+            }
+        }
+        assert_eq!(
+            runner.calls().len(),
+            responses.len(),
+            "no follow-up write after failed lookup"
+        );
+    }
+}
+
+#[test]
+fn azure_landed_pr_failure_does_not_become_an_unmerged_result() {
+    let runner = MockCliRunner::scripted(&[Ok("extension"), Err("access denied")]);
+    let hosting = AzureDevOps::new("org".into(), "project".into(), "repo".into(), &runner);
+    let error = hosting.merged_pr_to("release/1.0.0", "main").unwrap_err();
+    assert!(error.contains("access denied"));
+    assert!(error.contains("az devops login"));
+}
+
+#[test]
+fn azure_open_pr_rejects_failed_or_invalid_responses() {
+    for response in [Err("access denied"), Ok("None")] {
+        let runner = MockCliRunner::scripted(&[Ok("extension"), response]);
+        let hosting = AzureDevOps::new("org".into(), "project".into(), "repo".into(), &runner);
+        let error = hosting.open_pr_to("release/1.0.0", "main").unwrap_err();
+        match response {
+            Err(reason) => {
+                assert!(error.contains(reason));
+                assert!(error.contains("az login"));
+            }
+            Ok(_) => assert!(error.contains("Unexpected az pull request id: 'None'")),
+        }
+    }
+}
+
+#[test]
+fn azure_rejects_malformed_merged_rows_instead_of_authorizing_cleanup() {
+    for base in [None, Some("main")] {
+        let runner = MockCliRunner::scripted(&[Ok("extension"), Ok("completed\tmissing-fields")]);
+        let hosting = AzureDevOps::new("org".into(), "project".into(), "repo".into(), &runner);
+        let error = match base {
+            None => hosting.merged_pr("release/1.0.0").unwrap_err(),
+            Some(base) => hosting.merged_pr_to("release/1.0.0", base).unwrap_err(),
+        };
+        assert!(error.contains("Unexpected merged-PR data from az:"));
+        assert!(error.contains("missing-fields"));
+    }
 }

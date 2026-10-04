@@ -83,10 +83,6 @@ impl HostingPlatform for GitHub<'_> {
         let url = url.trim();
         Ok(if url.is_empty() { None } else { Some(url.to_string()) })
     }
-
-    fn check_auth(&self) -> Result<()> {
-        self.run_gh(&["auth", "status"]).map(|_| ())
-    }
 }
 
 /// Parse the `url<TAB>headRefOid<TAB>mergeCommit.oid<TAB>baseRefName` line the

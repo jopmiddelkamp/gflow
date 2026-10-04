@@ -111,7 +111,10 @@ mod tests {
         std::fs::create_dir_all(root.join(".gflow")).unwrap();
         std::fs::write(root.join(SCRIPT_UNIX), "#!/bin/sh\n").unwrap();
         std::fs::write(root.join(SCRIPT_WINDOWS), "@echo off\n").unwrap();
-        let expected = if cfg!(windows) { SCRIPT_WINDOWS } else { SCRIPT_UNIX };
+        #[cfg(windows)]
+        let expected = SCRIPT_WINDOWS;
+        #[cfg(not(windows))]
+        let expected = SCRIPT_UNIX;
         assert_eq!(resolve(&root).unwrap(), Some(root.join(expected)));
         std::fs::remove_dir_all(&root).ok();
     }
@@ -183,21 +186,4 @@ mod tests {
         assert_eq!(script.display_name(), "set-version.sh");
     }
 
-    #[test]
-    fn run_names_the_chmod_remedy_when_the_script_cannot_be_spawned() {
-        // A path that cannot be spawned (here: does not exist) drives the same
-        // Command::output() Err branch a non-executable file would — the OS
-        // refuses at exec time, so no process ever actually runs.
-        let path = PathBuf::from("/definitely/does/not/exist/set-version.sh");
-        let script = ScriptCli::new(path.clone(), std::env::temp_dir());
-
-        let err = script.run("1.0.0").unwrap_err();
-
-        let path_str = path.display().to_string();
-        assert!(err.starts_with(&format!("Version script {path_str} could not be run: ")), "got: {err}");
-        assert!(
-            err.contains(&format!("Make it executable: chmod +x {path_str} && git update-index --chmod=+x {path_str}, then re-run the command.")),
-            "got: {err}"
-        );
-    }
 }

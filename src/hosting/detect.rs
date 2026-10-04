@@ -115,71 +115,23 @@ mod tests {
     }
 
     #[test]
-    fn github_https() {
-        assert_eq!(parse_remote("https://github.com/acme/repo.git"), Some(Provider::GitHub));
-        assert_eq!(parse_remote("https://github.com/acme/repo"), Some(Provider::GitHub));
-    }
-
-    #[test]
-    fn github_ssh() {
-        assert_eq!(parse_remote("git@github.com:acme/repo.git"), Some(Provider::GitHub));
-        assert_eq!(parse_remote("ssh://git@github.com/acme/repo.git"), Some(Provider::GitHub));
-    }
-
-    #[test]
-    fn devops_https() {
-        assert_eq!(
-            parse_remote("https://dev.azure.com/beans/Shop/_git/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-    }
-
-    #[test]
-    fn devops_https_with_user() {
-        assert_eq!(
-            parse_remote("https://beans@dev.azure.com/beans/Shop/_git/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-    }
-
-    #[test]
-    fn devops_https_percent_encoded_project() {
-        assert_eq!(
-            parse_remote("https://dev.azure.com/beans/My%20Shop/_git/backend"),
-            Some(ado("beans", "My Shop", "backend")),
-        );
-    }
-
-    #[test]
-    fn devops_ssh_v3() {
-        assert_eq!(
-            parse_remote("git@ssh.dev.azure.com:v3/beans/Shop/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-        assert_eq!(
-            parse_remote("ssh://git@ssh.dev.azure.com/v3/beans/Shop/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-    }
-
-    #[test]
-    fn devops_legacy_visualstudio() {
-        assert_eq!(
-            parse_remote("https://beans.visualstudio.com/Shop/_git/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-        assert_eq!(
-            parse_remote("https://beans.visualstudio.com/DefaultCollection/Shop/_git/backend"),
-            Some(ado("beans", "Shop", "backend")),
-        );
-    }
-
-    #[test]
-    fn trailing_slash_and_git_suffix_stripped() {
-        assert_eq!(
-            parse_remote("https://dev.azure.com/beans/Shop/_git/backend.git/"),
-            Some(ado("beans", "Shop", "backend")),
-        );
+    fn parse_remote_recognizes_supported_remotes() {
+        for (case, remote, expected) in [
+            ("github_https", "https://github.com/acme/repo.git", Some(Provider::GitHub)),
+            ("github_https_without_git_suffix", "https://github.com/acme/repo", Some(Provider::GitHub)),
+            ("github_ssh_scp_style", "git@github.com:acme/repo.git", Some(Provider::GitHub)),
+            ("github_ssh_url", "ssh://git@github.com/acme/repo.git", Some(Provider::GitHub)),
+            ("devops_https", "https://dev.azure.com/beans/Shop/_git/backend", Some(ado("beans", "Shop", "backend"))),
+            ("devops_https_with_user", "https://beans@dev.azure.com/beans/Shop/_git/backend", Some(ado("beans", "Shop", "backend"))),
+            ("devops_https_percent_encoded_project", "https://dev.azure.com/beans/My%20Shop/_git/backend", Some(ado("beans", "My Shop", "backend"))),
+            ("devops_ssh_v3_scp_style", "git@ssh.dev.azure.com:v3/beans/Shop/backend", Some(ado("beans", "Shop", "backend"))),
+            ("devops_ssh_v3_url", "ssh://git@ssh.dev.azure.com/v3/beans/Shop/backend", Some(ado("beans", "Shop", "backend"))),
+            ("devops_legacy_visualstudio", "https://beans.visualstudio.com/Shop/_git/backend", Some(ado("beans", "Shop", "backend"))),
+            ("devops_legacy_visualstudio_default_collection", "https://beans.visualstudio.com/DefaultCollection/Shop/_git/backend", Some(ado("beans", "Shop", "backend"))),
+            ("trailing_slash_and_git_suffix_stripped", "https://dev.azure.com/beans/Shop/_git/backend.git/", Some(ado("beans", "Shop", "backend"))),
+        ] {
+            assert_eq!(parse_remote(remote), expected, "{case}: {remote}");
+        }
     }
 
     #[test]
@@ -245,6 +197,8 @@ mod tests {
         assert_eq!(parse_remote("git@ssh.dev.azure.com:v4/beans/Shop/backend"), None, "wrong ssh version segment");
         assert_eq!(parse_remote("https://beans.visualstudio.com/Shop"), None, "legacy without _git/repo");
         assert_eq!(parse_remote("https://beans.visualstudio.com/Shop/_git"), None, "legacy without repo");
+        assert_eq!(parse_remote("git@ssh.dev.azure.com"), None);
+        assert_eq!(parse_remote("https://dev.azure.com"), None);
     }
 
     #[test]

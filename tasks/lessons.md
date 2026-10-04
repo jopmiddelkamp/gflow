@@ -6,7 +6,32 @@ short and prescriptive — this file is read at session start.
 Lifecycle: a lesson lives here until it is promoted to a permanent rule in
 CLAUDE.md, then its entry is deleted. Promoted so far: skill loading
 ("Load these first"), plan intent-not-code (Plan Node Default),
-consequence-not-shape and mutation verification (Verification Before Done).
+consequence-not-shape and mutation verification (Verification Before Done),
+coverage additions need a duplicate review (TDD Policy, 2026-10-02),
+retained tests run in the same test binary (TDD Policy, 2026-10-03).
+
+---
+
+## Worktree agents start from master, not from develop (2026-10-03)
+
+**What happened.** Workflow agents with `isolation: 'worktree'` got a worktree
+at `master` (the default branch) while the session worked on `develop`. Mutation
+checks and an inline-test refactor ran against code one release behind, and the
+refactor's patch targeted stale files.
+
+**Rule.** Before trusting a worktree agent's result, compare `git -C <worktree>
+log -1` with `HEAD`. When the work must see `develop` or uncommitted changes,
+run agents in the main tree with one owned file each instead.
+
+## Keep instrumented builds out of `target/` (2026-10-03)
+
+**What happened.** A per-test coverage scan built with `cargo llvm-cov show-env`
+into the shared `target/debug`. Plain `cargo test` then wrote 130 `.profraw`
+files into the repo root until the crate was rebuilt.
+
+**Rule.** Give any hand-run instrumented build its own `CARGO_TARGET_DIR` in the
+scratchpad, and set `LLVM_PROFILE_FILE` for every process it starts, including
+`--list` calls.
 
 ---
 

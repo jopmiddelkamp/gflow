@@ -25,7 +25,7 @@ If the intent is ambiguous, ask the user to clarify.
 ## Pre-flight checks
 
 1. For major/minor: confirm you are on `develop`. If not, ask user if you should switch.
-2. For patch: confirm you are on `main`. If not, ask user if you should switch.
+2. For patch: confirm you are on `master`. If not, ask user if you should switch.
 3. Ensure working tree is clean (gflow auto-stashes for start, but version file updates need a clean state).
 
 ## Major/minor release flow
@@ -49,7 +49,7 @@ If a release branch already exists, gflow checks it out. Verify whether version 
 ### Phase 2: Update version files
 
 1. **Update `Cargo.toml`** — set the `version` field to `X.Y.Z`
-2. **Update `packaging/chocolatey/gflow.nuspec`** — set the `<version>` field to `X.Y.Z`
+2. **Update `packaging/chocolatey/gflow.nuspec`** — set the `<version>` field to `X.Y.Z`. Leave the `__TAG__` placeholder in `<iconUrl>`: CI fills in the release tag. Never hardcode a tag, use `@latest`, or use `raw.githubusercontent.com` (Chocolatey moderation requirement).
 3. **Update `CHANGELOG.md`** — follows [Keep a Changelog](https://keepachangelog.com/) format:
    - Find the previous clean release tag: `git tag --list 'v*' --sort=-v:refname | grep -v '\-' | head -1`
    - Add a new `## [X.Y.Z] - YYYY-MM-DD` section at the top (below the header)
@@ -76,9 +76,9 @@ leave it — raising it needlessly nags users whose older binary works fine.
    - The RC tag triggers CI tests
 7. **Confirm with user:**
    > RC tag `vX.Y.0-rc.N` has been pushed. CI will run tests.
-   > Confirm when you are ready to finish the release (merge to main + develop and create the production tag).
+   > Confirm when you are ready to finish the release (merge to master + develop and create the production tag).
 8. **Finish release** — run `gflow finish`
-   - Merges release branch into `main` and `develop`
+   - Merges release branch into `master` and `develop`
    - Creates final clean tag `vX.Y.0`
    - Deletes the release branch locally and remotely
    - Pushes everything
@@ -87,7 +87,7 @@ leave it — raising it needlessly nags users whose older binary works fine.
 
 Patch releases use gflow's hotfix flow:
 
-1. Switch to `main` if not already there
+1. Switch to `master` if not already there
 2. Run `gflow start hotfix-fix --name version-bump`
    - If no hotfix branch exists, gflow auto-creates `hotfix/X.Y.Z` (bumps patch from latest tag)
    - Creates `hotfix-fix/X.Y.Z/version-bump` branch
@@ -96,7 +96,7 @@ Patch releases use gflow's hotfix flow:
 5. Run tests
 6. Commit and run `gflow finish --breaking=false` → creates PR to hotfix branch
 7. After PR is merged, switch to the hotfix branch: `git switch hotfix/X.Y.Z`
-8. Run `gflow finish` → merges to main + develop, creates `vX.Y.Z` tag, deletes branch
+8. Run `gflow finish` → merges to master + develop, creates `vX.Y.Z` tag, deletes branch
 
 **Note:** The hotfix flow requires a PR merge step. Guide the user through it rather than attempting full automation.
 
@@ -115,13 +115,21 @@ The CI pipeline (`.github/workflows/ci.yml`) responds to tags:
 - Updates the Homebrew formula at `jopmiddelkamp/homebrew-tap` (requires `HOMEBREW_TAP_TOKEN` secret)
 - Publishes to Chocolatey (requires `CHOCOLATEY_API_KEY` secret)
 
+After `gflow finish`, verify the **tag** run. `--limit 1` alone picks the newer master/develop run:
+```bash
+id=$(gh run list --workflow ci.yml --branch vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run watch "$id" --exit-status
+gh run view "$id" --json jobs --jq '.jobs[]|select(.name=="publish-chocolatey")|.conclusion'
+```
+If `publish-chocolatey` failed with 403, check the log first. The usual cause is an API key without push rights for `gflow`. Give the user the run ID and `gh run rerun <id> --failed`; GitHub re-runs work only up to 30 days after the run.
+
 ## Summary of gflow commands used
 
 | Step | Command | What it does |
 |------|---------|--------------|
 | Start release | `gflow start release [--major\|--minor]` | Creates `release/X.Y.0` from develop, tags `vX.Y.0-rc.1` |
 | Bump RC | `gflow bump` | Creates next RC tag at HEAD |
-| Finish release | `gflow finish` | Merges to main + develop, creates clean `vX.Y.0` tag |
+| Finish release | `gflow finish` | Merges to master + develop, creates clean `vX.Y.0` tag |
 | Start hotfix | `gflow start hotfix-fix --name <name>` | Creates hotfix branch + fix branch |
 | Finish hotfix-fix | `gflow finish --breaking=false` | Creates PR to hotfix branch |
-| Finish hotfix | `gflow finish` | Merges to main + develop, creates `vX.Y.Z` tag |
+| Finish hotfix | `gflow finish` | Merges to master + develop, creates `vX.Y.Z` tag |

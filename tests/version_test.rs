@@ -1,3 +1,5 @@
+use std::fmt::{self, Write};
+
 use gflow::git::branch::BranchType;
 use gflow::version::SemVer;
 
@@ -243,4 +245,52 @@ fn finish_branch_source_rejects_non_finish_names() {
     assert_eq!(finish_branch_source("finish/release-notaversion-into-main"), None);
     assert_eq!(finish_branch_source("finish/release-1.2.0"), None);
     assert_eq!(finish_branch_source("finish/release-1.2.0-into-"), None);
+}
+
+struct LimitedOutput {
+    text: String,
+    capacity: usize,
+}
+
+impl Write for LimitedOutput {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        if self.text.len() + text.len() > self.capacity {
+            return Err(fmt::Error);
+        }
+        self.text.push_str(text);
+        Ok(())
+    }
+}
+
+#[test]
+fn invalid_version_numbers_do_not_become_releases() {
+    for version in [
+        "x.2.3",
+        "1.x.3",
+        "1.2.x",
+        "4294967296.2.3",
+        "1.4294967296.3",
+        "1.2.4294967296",
+    ] {
+        assert_eq!(SemVer::parse(version), None);
+        assert_eq!(
+            BranchType::parse(&format!("release/{version}")),
+            BranchType::Other
+        );
+    }
+    for version in ["1.2.3-rc.x", "1.2.3-rc.4294967296"] {
+        assert_eq!(SemVer::parse(version), None);
+    }
+}
+
+#[test]
+fn version_display_reports_output_failures_in_both_version_parts() {
+    for (capacity, prefix) in [(0, ""), (5, "1.2.3")] {
+        let mut output = LimitedOutput {
+            text: String::new(),
+            capacity,
+        };
+        assert!(write!(output, "{}", SemVer::new(1, 2, 3).with_rc(1)).is_err());
+        assert_eq!(output.text, prefix);
+    }
 }

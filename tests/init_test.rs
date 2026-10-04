@@ -1,9 +1,11 @@
 mod common;
 
+use std::cell::Cell;
 use std::fs;
 
 use common::MockPrompter;
 use gflow::init::{ensure, run, wizard};
+use gflow::prompt::Prompter;
 use gflow::repo_config::{self, BumpStrategy, Mode, RepoConfig, NOT_INITIALISED};
 
 fn root() -> common::TempDir {
@@ -32,15 +34,6 @@ fn wizard_defaults_are_the_first_item_of_every_question() {
     let root = root();
     let cfg = wizard(&MockPrompter::scripted(&[0, 0, 0]), &root).unwrap();
     assert_eq!(cfg, RepoConfig::default());
-}
-
-#[test]
-fn wizard_abort_writes_nothing() {
-    let root = root();
-    let prompter = MockPrompter::aborting();
-    assert_eq!(wizard(&prompter, &root).unwrap_err(), "Aborted");
-    assert_eq!(prompter.calls().len(), 1, "the first question was asked and the abort stopped there");
-    assert!(!repo_config::exists(&root));
 }
 
 #[test]
@@ -115,4 +108,77 @@ fn the_committed_repo_file_still_overrides_the_global_one() {
     let layers = ensure(&MockPrompter::aborting(), Some(&home), &repo, false).unwrap();
 
     assert_eq!(layers.settings.resolve().mode, Mode::Free);
+}
+
+struct CancelAt {
+    question: usize,
+    asked: Cell<usize>,
+}
+
+impl Prompter for CancelAt {
+    fn select(&self, _: &str, _: &[&str]) -> Result<usize, String> {
+        let asked = self.asked.get() + 1;
+        self.asked.set(asked);
+        if asked == self.question {
+            Err("Aborted".into())
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn prompt_name(&self, _: &str) -> Result<String, String> {
+        Err("unexpected name prompt".into())
+    }
+    fn prompt_line(&self, _: &str) -> Result<String, String> {
+        Err("unexpected line prompt".into())
+    }
+}
+
+#[test]
+fn canceling_any_initialization_question_never_writes_partial_policy() {
+    for question in 1..=3 {
+        let root = common::tmp_dir("gflow-init-cancel");
+        let prompter = CancelAt {
+            question,
+            asked: Cell::new(0),
+        };
+
+        assert_eq!(
+            gflow::init::ensure(&prompter, None, &root, true).unwrap_err(),
+            "Aborted"
+        );
+        assert_eq!(prompter.asked.get(), question);
+        assert!(!root.join(".gflow").exists());
+    }
+}
+
+#[test]
+fn invalid_existing_policy_stops_initialization_before_questions() {
+    let root = common::tmp_dir("gflow-init-invalid");
+    fs::create_dir(root.join(".gflow")).unwrap();
+    fs::write(root.join(".gflow/config"), "mode=invalid\n").unwrap();
+    let prompter = MockPrompter::new();
+
+    assert!(gflow::init::ensure(&prompter, None, &root, true)
+        .unwrap_err()
+        .contains("mode"));
+    assert!(prompter.calls().is_empty());
+    assert_eq!(
+        fs::read_to_string(root.join(".gflow/config")).unwrap(),
+        "mode=invalid\n"
+    );
+}
+
+#[test]
+fn initialization_write_failure_preserves_the_blocking_file() {
+    let root = common::tmp_dir("gflow-init-write-failure");
+    fs::write(root.join(".gflow"), "do not replace").unwrap();
+
+    let error = gflow::init::wizard(&MockPrompter::scripted(&[0, 0, 0]), &root).unwrap_err();
+
+    assert!(error.contains("Failed to create"), "{error}");
+    assert_eq!(
+        fs::read_to_string(root.join(".gflow")).unwrap(),
+        "do not replace"
+    );
 }

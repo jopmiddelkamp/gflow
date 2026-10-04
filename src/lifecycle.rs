@@ -135,14 +135,7 @@ pub fn run(
 
     // Write state file BEFORE the first side effect of a release/hotfix finish.
     if is_finish_with_state && resume_state.is_none() {
-        let Some((kind, major, minor, patch)) = identity else {
-            unreachable!("FinishRelease/FinishHotfix are only ever dispatched from their own release/hotfix branch, which always yields a finish identity");
-        };
-        FinishState {
-            kind, major, minor, patch,
-            started_at: current_timestamp(),
-            stash_message: stash_msg.clone(),
-        }.save(&git_dir)?;
+        save_new_finish(&git_dir, identity, stash_msg.clone())?;
     }
 
     let worktree = if worktree_active { Some(WorktreeContext { env: worktree_env, prompter }) } else { None };
@@ -151,8 +144,8 @@ pub fn run(
 
     // Lifecycle: clear state on success of a release/hotfix finish. Both a fresh
     // finish and a resume run on the source branch, so its identity is available.
-    if result.is_ok() && (is_finish_with_state || resume_state.is_some()) {
-        if let Some((kind, major, minor, patch)) = identity {
+    if let Some((kind, major, minor, patch)) = identity {
+        if result.is_ok() && (is_finish_with_state || resume_state.is_some()) {
             FinishState::clear(&git_dir, kind, major, minor, patch)?;
         }
     }
@@ -249,6 +242,21 @@ fn finish_identity(branch_type: &BranchType) -> Option<(FinishKind, u32, u32, u3
         }
         _ => None,
     }
+}
+
+fn save_new_finish(
+    git_dir: &std::path::Path,
+    identity: Option<(FinishKind, u32, u32, u32)>,
+    stash_message: Option<String>,
+) -> Result<(), String> {
+    let Some((kind, major, minor, patch)) = identity else {
+        unreachable!("FinishRelease/FinishHotfix are only ever dispatched from their own release/hotfix branch, which always yields a finish identity");
+    };
+    FinishState {
+        kind, major, minor, patch,
+        started_at: current_timestamp(),
+        stash_message,
+    }.save(git_dir)
 }
 
 fn handle_abort(git_dir: &std::path::Path, state: Option<FinishState>) -> Result<(), String> {
@@ -415,4 +423,211 @@ fn resolve_landing_template(git: &dyn Git, repo_cfg: &RepoConfig, key: &str) -> 
         return Ok(crate::hosting::template::resolve_keys(&git.worktree_root()?, key, key));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mocks::{MockGit, MockHosting, MockPrompter};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn a_new_finish_preserves_its_full_identity_and_stash() {
+        let directory = crate::test_support::mocks::tmp_dir("gflow-new-finish-identity");
+        for (kind, major, minor, patch, stash) in [
+            (FinishKind::Release, 2, 5, 0, None),
+            (FinishKind::Hotfix, 2, 4, 7, Some("gflow-finish:hotfix/2.4.7:1234")),
+        ] {
+            let before = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            save_new_finish(&directory, Some((kind, major, minor, patch)), stash.map(str::to_string)).unwrap();
+            let saved = FinishState::load(&directory, kind, major, minor, patch).unwrap().unwrap();
+            let after = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
+            assert_eq!((saved.kind, saved.major, saved.minor, saved.patch), (kind, major, minor, patch));
+            assert_eq!(saved.stash_message.as_deref(), stash);
+            assert!((before..=after).contains(&saved.started_at.parse::<u64>().unwrap()));
+        }
+    }
+
+    #[test]
+    fn dispatch_runs_each_requested_workflow_and_preserves_failures() {
+        use crate::flows::start::ReleaseType;
+
+        let directory = crate::test_support::mocks::tmp_dir("gflow-dispatch-contract");
+        for (branch, action, expected) in [
+            ("develop", Action::StartWorkBranch {
+                prefix: "feature".into(), name: "login".into(), from: "develop".into(),
+                no_checkout: false, no_worktree: false,
+            }, "create_branch:feature/login:develop"),
+            ("develop", Action::StartWorkBranch {
+                prefix: "docs".into(), name: "guide".into(), from: "main".into(),
+                no_checkout: true, no_worktree: false,
+            }, "create_branch_no_checkout:docs/guide:main"),
+            ("develop", Action::StartRelease {
+                release_type: Some(ReleaseType::Minor), no_worktree: false,
+            }, "create_branch:release/2.5.0:develop"),
+            ("release/2.5.0", Action::StartReleaseFix {
+                name: "login".into(), no_checkout: false, no_worktree: false,
+            }, "create_branch:release-fix/2.5.0/login:release/2.5.0"),
+            ("hotfix/2.4.1", Action::StartHotfixFix {
+                name: "login".into(), no_checkout: false, no_worktree: false,
+            }, "create_branch:hotfix-fix/2.4.1/login:hotfix/2.4.1"),
+            ("feature/login", Action::FinishWorkBranch {
+                breaking: Some(true), base: Some("develop".into()),
+            }, "create_or_get_pr:feature/login:develop:feat!: login"),
+            ("release-fix/2.5.0/login", Action::FinishReleaseFix,
+                "create_or_get_pr:release-fix/2.5.0/login:release/2.5.0:fix: login"),
+            ("hotfix-fix/2.4.1/login", Action::FinishHotfixFix,
+                "create_or_get_pr:hotfix-fix/2.4.1/login:hotfix/2.4.1:fix: login"),
+            ("release-chore/2.5.0/version", Action::FinishReleaseChore,
+                "create_or_get_pr:release-chore/2.5.0/version:release/2.5.0:chore: version"),
+            ("release/2.5.0", Action::BumpVersion,
+                "create_tag:v2.5.0-rc.2:chore: bump version to v2.5.0-rc.2"),
+            ("release/2.5.0", Action::SyncWithDevelop,
+                "merge:release/2.5.0:chore: sync release 2.5.0 with develop"),
+            ("release/2.5.0", Action::FinishRelease,
+                "create_tag:v2.5.0:chore: release 2.5.0"),
+            ("hotfix/2.4.1", Action::FinishHotfix,
+                "create_tag:v2.4.1:chore: hotfix 2.4.1"),
+        ] {
+            let mut git = MockGit::new();
+            git.current_branch = branch.into();
+            git.worktree_root = directory.to_path_buf();
+            git.tags = vec!["v2.4.0".into()];
+            git.tags_on_branch = vec!["v2.5.0-rc.1".into()];
+            git.existing_remote_branches.insert("develop".into());
+            let hosting = MockHosting::new();
+
+            run_flow(&git, &hosting, &MockPrompter::aborting(), &BranchType::parse(branch), branch,
+                &action, false, None, None, "main", &RepoConfig::default(), None, false).unwrap();
+
+            let mut calls = git.calls();
+            assert_eq!(calls.first(), Some(&format!("ff_merge:origin/{branch}")));
+            calls.extend(hosting.calls());
+            assert!(calls.iter().any(|call| call == expected), "{action:?}: {calls:?}");
+
+            let failure = match &action {
+                Action::StartWorkBranch { .. } => expected,
+                Action::StartRelease { .. } => "list_branches_matching:release/*",
+                Action::BumpVersion | Action::FinishRelease => "tags_on_branch:release/2.5.0",
+                Action::FinishHotfix => "is_ancestor:hotfix/2.4.1:main",
+                _ => "current_branch",
+            };
+            git.calls.borrow_mut().clear();
+            git.fail_call = Some((failure.into(), 1));
+            let hosting = MockHosting::new();
+
+            let error = run_flow(&git, &hosting, &MockPrompter::aborting(), &BranchType::parse(branch), branch,
+                &action, true, None, None, "main", &RepoConfig::default(), None, false).unwrap_err();
+
+            assert_eq!(error, format!("injected git failure: {failure}"));
+            assert_eq!(git.calls().last().unwrap(), failure);
+            assert!(hosting.calls().is_empty());
+
+            let mode = match action {
+                Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix
+                    | Action::FinishReleaseChore => Mode::Free,
+                Action::SyncWithDevelop | Action::FinishRelease | Action::FinishHotfix => Mode::Protected,
+                _ => continue,
+            };
+            git.calls.borrow_mut().clear();
+            git.fail_call = Some(("worktree_root".into(), 1));
+            let error = run_flow(&git, &hosting, &MockPrompter::aborting(), &BranchType::parse(branch), branch,
+                &action, true, None, None, "main", &RepoConfig { mode, ..RepoConfig::default() }, None, false).unwrap_err();
+
+            assert_eq!(error, "injected git failure: worktree_root");
+            assert_eq!(git.calls(), ["worktree_root"]);
+            assert!(hosting.calls().is_empty());
+        }
+    }
+
+    #[test]
+    fn resumed_dispatch_uses_the_saved_version_without_syncing_the_current_branch() {
+        for (action, kind, major, minor, patch, expected) in [
+            (Action::FinishRelease, FinishKind::Release, 2, 5, 0,
+                "create_tag:v2.5.0:chore: release 2.5.0"),
+            (Action::FinishHotfix, FinishKind::Hotfix, 2, 4, 7,
+                "create_tag:v2.4.7:chore: hotfix 2.4.7"),
+        ] {
+            let mut git = MockGit::new();
+            git.tags_on_branch = vec!["v2.5.0-rc.1".into()];
+            let state = FinishState { kind, major, minor, patch, started_at: "1234".into(), stash_message: None };
+
+            run_flow(&git, &MockHosting::new(), &MockPrompter::aborting(), &BranchType::Develop,
+                "develop", &action, false, None, Some(&state), "main", &RepoConfig::default(), None, false).unwrap();
+
+            let calls = git.calls();
+            assert!(!calls.first().unwrap().starts_with("ff_merge:"), "{calls:?}");
+            assert!(calls.iter().any(|call| call == expected), "{calls:?}");
+        }
+    }
+
+    #[test]
+    fn dispatch_ignores_only_a_missing_upstream_and_honors_the_sync_skip() {
+        for (error, skip_sync, succeeds) in [
+            (None, false, true),
+            (Some("origin/develop is not something we can merge"), false, true),
+            (Some("local and remote branches diverged"), false, false),
+            (Some("local and remote branches diverged"), true, true),
+        ] {
+            let mut git = MockGit::new();
+            git.ff_merge_error = error.map(str::to_string);
+            let hosting = MockHosting::new();
+            let action = Action::StartWorkBranch {
+                prefix: "feature".into(), name: "login".into(), from: "develop".into(),
+                no_checkout: true, no_worktree: false,
+            };
+
+            let result = run_flow(&git, &hosting, &MockPrompter::aborting(), &BranchType::Develop,
+                "develop", &action, skip_sync, None, None, "main", &RepoConfig::default(), None, false);
+
+            let calls = git.calls();
+            if succeeds {
+                result.unwrap();
+                assert!(calls.contains(&"create_branch_no_checkout:feature/login:develop".into()));
+                assert!(calls.contains(&"push:feature/login".into()));
+                assert_eq!(calls.iter().any(|call| call.starts_with("ff_merge:")), !skip_sync);
+            } else {
+                assert_eq!(result.unwrap_err(), "local and remote branches diverged");
+                assert_eq!(calls, vec!["ff_merge:origin/develop"]);
+            }
+            assert!(hosting.calls().is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_finish_identity_cannot_write_state() {
+        let directory = crate::test_support::mocks::tmp_dir("gflow-missing-finish-identity");
+        let panic = catch_unwind(|| save_new_finish(&directory, None, None))
+            .expect_err("a state file requires a source branch identity");
+        let message = panic.downcast_ref::<&str>().expect("invariant panic message");
+        assert!(message.contains("always yields a finish identity"));
+        assert_eq!(std::fs::read_dir(&*directory).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn invalid_dispatch_stops_before_any_git_or_hosting_operation() {
+        let git = MockGit::new();
+        let hosting = MockHosting::new();
+        let prompter = MockPrompter::new();
+        for (action, expected) in [
+            (Action::BumpVersion, "BumpVersion action only from Release branch"),
+            (Action::SyncWithDevelop, "SyncWithDevelop action only from Release branch"),
+            (Action::FinishRelease, "FinishRelease action only from Release branch"),
+            (Action::FinishHotfix, "FinishHotfix action only from Hotfix branch"),
+            (Action::AbortFinish, "AbortFinish is handled before run_flow"),
+        ] {
+            let panic = catch_unwind(AssertUnwindSafe(|| run_flow(
+                &git, &hosting, &prompter, &BranchType::Other, "unrecognized",
+                &action, true, None, None, "main", &RepoConfig::default(), None, false,
+            ))).expect_err("an invalid dispatch must fail before side effects");
+            let message = panic.downcast_ref::<&str>().expect("invariant panic message");
+            assert!(message.contains(expected), "{message}");
+        }
+        assert!(git.calls().is_empty());
+        assert!(hosting.calls().is_empty());
+        assert!(prompter.calls().is_empty());
+    }
 }
