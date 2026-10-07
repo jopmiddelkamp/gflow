@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0] - 2026-10-08
+
+### Changed
+- Subcommands such as `gflow finish` and `gflow sync` now fetch in the background, like the menu already did. While the fetch runs, a work-branch finish asks the hosting platform for its PRs. `gflow finish --abort` does not fetch. If the background fetch fails, gflow fetches again in the foreground, where passphrase and login prompts work.
+- On Azure DevOps, gflow can now list all PRs from one branch. A first work-branch finish needs one `az repos pr list` call instead of three. A branch missing from a full PR list of its target (more than 1000 PRs into `develop`) loads its own list once, instead of one extra `az` call per lookup. On a remote with 3 seconds per network call, a first work-branch finish went from 20 s to 11 s.
+- Finding the open release and hotfix branches asks git once instead of once or twice per branch. With 115 release branches this went from 7.8 s to under 0.1 s. This speeds up `start release`, `start release-fix`, `start hotfix-fix` and `finish hotfix`. Git older than 2.41 falls back to the old check.
+
+### Fixed
+- Every `gflow start` now creates the new branch from the latest `origin/<base>`. Before, worktree mode and `--no-checkout` used the local base branch, which a fetch never updates, and protected mode created new hotfixes from a stale local `main`. The local base is still used when it has commits that are not on origin yet.
+- In protected mode, `gflow bump` no longer tags a merged version PR whose merge commit is not on the release branch, such as one left behind by an abandoned earlier try of the same release.
+
 ## [4.5.0] - 2026-10-07
 
 ### Changed
@@ -269,6 +280,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.6.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.5.0...v4.6.0
 [4.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.1...v4.4.0
 [4.3.1]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.0...v4.3.1
