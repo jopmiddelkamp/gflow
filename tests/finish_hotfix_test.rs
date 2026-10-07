@@ -96,8 +96,7 @@ fn finish_hotfix_excludes_shipped_release_branch() {
     finish_hotfix(&git, &hosting, &RepoConfig::default(), 1, 0, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"tag_exists:v1.2.0".to_string()));
-    assert!(calls.contains(&"tag_exists:v1.3.0".to_string()));
+    assert!(calls.contains(&"list_tags".to_string()));
     assert!(
         !calls.iter().any(|c| c.contains("release/1.2.0")),
         "shipped release/1.2.0 must receive no merge/push; calls: {calls:?}"
@@ -141,10 +140,7 @@ fn finish_hotfix_propagates_to_multiple_release_branches_in_sorted_order() {
         "is_pushed:develop",
         "push:develop",
         "list_branches_matching:release/*",
-        "tag_exists:v2.0.0",
-        "tag_exists:2.0.0",
-        "tag_exists:v1.5.0",
-        "tag_exists:1.5.0",
+        "list_tags",
         "is_ancestor:hotfix/1.0.1:release/1.5.0",
         "worktree_of:release/1.5.0",
         "checkout:release/1.5.0",
@@ -502,10 +498,7 @@ fn protected_hotfix_opens_one_release_pr_per_run() {
         "commit_parent_count:mc2",
         "branch_sha:hotfix/1.1.1",
         "list_branches_matching:release/*",
-        "tag_exists:v1.3.0",
-        "tag_exists:1.3.0",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "is_ancestor:hotfix/1.1.1:origin/release/1.2.0",
         "remote_branch_exists:hotfix/1.1.1",
         "is_pushed:hotfix/1.1.1",
@@ -571,10 +564,7 @@ fn protected_hotfix_next_run_opens_pr_for_the_remaining_release() {
         "commit_parent_count:mc2",
         "branch_sha:hotfix/1.1.1",
         "list_branches_matching:release/*",
-        "tag_exists:v1.3.0",
-        "tag_exists:1.3.0",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "is_ancestor:mc3:origin/release/1.2.0",
         "commit_parent_count:mc3",
         "branch_sha:hotfix/1.1.1",
@@ -649,8 +639,7 @@ fn protected_hotfix_completes_after_all_landed() {
         "commit_parent_count:mc2",
         "branch_sha:hotfix/1.1.1",
         "list_branches_matching:release/*",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "is_ancestor:mc3:origin/release/1.2.0",
         "commit_parent_count:mc3",
         "branch_sha:hotfix/1.1.1",

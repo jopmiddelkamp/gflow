@@ -59,6 +59,11 @@ pub trait HostingPlatform {
     /// finish-branch migration: an open landing PR from an older gflow (head =
     /// the release/hotfix branch itself) must be surfaced, not duplicated.
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>>;
+    /// Load the PRs of `head` now, while other work runs, for the lookups that
+    /// follow. A provider whose lookups are cheap loads nothing.
+    fn prefetch_prs(&self, _head: &str) -> Result<()> {
+        Ok(())
+    }
     fn open_url(&self, url: &str) -> Result<()> {
         open_in_browser(url)
     }
