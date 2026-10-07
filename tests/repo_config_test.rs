@@ -86,6 +86,21 @@ fn migration_never_overwrites_a_value_the_file_already_states() {
 }
 
 #[test]
+fn the_migration_reads_each_scope_with_one_git_call() {
+    // It runs before every menu; three reads per scope cost a spawn each.
+    let home = tmp_dir("gflow-migrate-home");
+    let repo = tmp_dir("gflow-migrate-repo");
+    let git = MockGit::new();
+
+    repo_config::migrate_git_config(&git, Some(&home), Some(&repo)).unwrap();
+
+    assert_eq!(git.calls(), vec![
+        "config_section_at:global:gflow.worktree",
+        "config_section_at:local:gflow.worktree",
+    ]);
+}
+
+#[test]
 fn nothing_to_migrate_writes_no_file() {
     let home = tmp_dir("gflow-migrate-home");
     let repo = tmp_dir("gflow-migrate-repo");
@@ -336,7 +351,7 @@ fn migration_stops_when_git_config_cannot_be_read() {
     assert!(!repo_config::global_config_path(&home).exists());
     assert_eq!(
         runner.calls(),
-        vec!["git config --global --get gflow.worktree.enabled"]
+        vec![r"git config --global --get-regexp ^gflow\.worktree\."]
     );
 }
 
@@ -344,9 +359,7 @@ fn migration_stops_when_git_config_cannot_be_read() {
 fn migration_keeps_the_new_copy_when_removing_an_old_git_key_fails() {
     let home = tmp_dir("gflow-migration-unset-failure");
     let runner = MockCommandRunner::scripted(&[
-        (0, "true", ""),
-        (1, "", ""),
-        (1, "", ""),
+        (0, "gflow.worktree.enabled true", ""),
         (2, "", "cannot lock config"),
     ]);
     let git = GitCli::new(&runner);

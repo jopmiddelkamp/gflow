@@ -32,7 +32,7 @@ fn try_cleanup_merged(git: &dyn Git, hosting: &dyn HostingPlatform, current: &st
     // directory is gone, so every other git call must happen before it.
     if git.remote_branch_exists(current)? {
         println!("Deleting remote branch: {current}");
-        git.delete_branch_remote(current)?;
+        git.delete_remote_branches(&[current])?;
     } else {
         println!("↷ skipped: remote branch deletion (already gone)");
     }
@@ -87,38 +87,45 @@ fn pr_title(commit_type: &str, breaking: bool, name: &str) -> String {
     format!("{commit_type}{bang}: {}", name.replace('-', " "))
 }
 
+/// Develop and work branches are candidate parents — decided by the taxonomy
+/// in BranchType, not a local prefix list. chore/set-version-* is gflow-created
+/// and machine-owned: a protected version bump merges and deletes it, which
+/// would strand a PR that targeted it as a base.
+fn is_parent_candidate(branch: &str, current: &str) -> bool {
+    let parsed = BranchType::parse(branch);
+    branch != current
+        && (parsed == BranchType::Develop || parsed.is_work_branch())
+        && !branch.starts_with("chore/set-version-")
+}
+
+/// `(branch, commits only on current, commits only on branch)` for every
+/// candidate. One query when git can answer it; per branch otherwise, where a
+/// branch git cannot compare (no merge base, bad revision) is left out.
+fn candidate_divergence(git: &dyn Git, current: &str) -> Result<Vec<(String, u32, u32)>, String> {
+    if let Ok(all) = git.remote_branch_divergence(current) {
+        return Ok(all
+            .into_iter()
+            .filter(|d| is_parent_candidate(&d.branch, current))
+            .map(|d| (d.branch, d.behind, d.ahead))
+            .collect());
+    }
+    let mut counted = Vec::new();
+    for branch in git.list_remote_branches()? {
+        if !is_parent_candidate(&branch, current) {
+            continue;
+        }
+        let Ok(base) = git.merge_base(current, &branch) else { continue };
+        let Ok(current_count) = git.rev_list_count(&base, current) else { continue };
+        let Ok(candidate_count) = git.rev_list_count(&base, &branch) else { continue };
+        counted.push((branch, current_count, candidate_count));
+    }
+    Ok(counted)
+}
+
 fn detect_parent_branch(git: &dyn Git, prompter: &dyn Prompter, current: &str) -> Result<String, String> {
-    let remote_branches = git.list_remote_branches()?;
     let mut candidates: Vec<(String, u32)> = Vec::new();
 
-    for branch in &remote_branches {
-        if branch == current {
-            continue;
-        }
-        // Candidate parents are develop and work branches — decided by the
-        // taxonomy in BranchType, not a local prefix list.
-        let parsed = BranchType::parse(branch);
-        if parsed != BranchType::Develop && !parsed.is_work_branch() {
-            continue;
-        }
-        // chore/set-version-* is gflow-created and machine-owned: a protected
-        // version bump merges and deletes it, which would strand a PR that
-        // targeted it as a base.
-        if branch.starts_with("chore/set-version-") {
-            continue;
-        }
-        let base = match git.merge_base(current, branch) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let current_count = match git.rev_list_count(&base, current) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let candidate_count = match git.rev_list_count(&base, branch) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+    for (branch, current_count, candidate_count) in candidate_divergence(git, current)? {
         // Skip child work branches: a candidate that already contains our whole
         // history (nothing of ours is missing from it) while carrying commits
         // of its own branched *from* us. Comparing the two counts instead
@@ -129,10 +136,10 @@ fn detect_parent_branch(git: &dyn Git, prompter: &dyn Prompter, current: &str) -
         // targets it. Exempting it keeps a develop that already contains our
         // tip (merged outside a PR the host reports) in the menu, matching the
         // no-candidates fallback below, which targets develop too.
-        if parsed != BranchType::Develop && current_count == 0 && candidate_count > 0 {
+        if branch != "develop" && current_count == 0 && candidate_count > 0 {
             continue;
         }
-        candidates.push((branch.clone(), current_count));
+        candidates.push((branch, current_count));
     }
 
     if candidates.is_empty() {

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::flows::{
-    announce_pending_landing, announce_version_pr, cleanup_finish_branches, delete_branch_guarded, delete_source_branch, ensure_finish_branch,
+    announce_pending_landing, announce_version_pr, cleanup_finish_branches, delete_branches_guarded, delete_source_branch, ensure_finish_branch,
     finish_conflict_hint, finish_leg_landed, land_leg_strict, landing_pr_body, merge_where_checked_out, refuse_open_legacy_pr, LegState,
     merge_into, push_if_needed, push_tag_if_missing, report_commits_past_landing, require_clean_tree,
     resume_hint, run_version_script, tag_at_if_missing, tag_if_missing, tip_landed_somewhere,
@@ -159,13 +159,13 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
             announce_next_version(latest.as_ref(), &next, &tag);
             git.create_tag_at(&tag, &format!("chore: bump version to {tag}"), &pr.merge_commit_sha)?;
             git.push_tag(&tag)?;
-            delete_branch_guarded(git, &chore_branch)?;
+            delete_branches_guarded(git, &[&chore_branch])?;
             println!("Tagged and pushed: {tag}");
             return Ok(());
         }
         // Already cut on a previous run — this run just tidies up remnants
         // (a chore branch the merge didn't delete) and re-evaluates as fresh.
-        delete_branch_guarded(git, &chore_branch)?;
+        delete_branches_guarded(git, &[&chore_branch])?;
     }
 
     let Some(script) = script else {

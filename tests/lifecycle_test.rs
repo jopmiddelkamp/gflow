@@ -882,6 +882,52 @@ fn no_subcommand_falls_through_to_the_interactive_menu() {
     assert_eq!(prompter.calls().len(), 1);
 }
 
+fn run_menu(git: &MockGit, prompter: &MockPrompter) -> Result<(), String> {
+    let editor = MockEditor::new();
+    run(git, &MockHosting::new(), prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, None)
+}
+
+#[test]
+fn the_menu_path_fetches_while_the_menu_is_open() {
+    // A fetch can take many seconds; the user spends them choosing.
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-menu-fetch");
+    git.current_branch = "develop".to_string();
+    git.tags = vec!["v2.4.0".to_string()];
+
+    run_menu(&git, &MockPrompter::scripted(&[5, 1])).unwrap(); // start release, minor
+
+    let calls = git.calls();
+    let started = calls.iter().position(|c| c == "start_fetch").expect("the menu path starts the fetch");
+    let awaited = calls.iter().position(|c| c == "fetch").expect("and awaits it before acting");
+    assert!(started < awaited, "calls: {calls:?}");
+}
+
+#[test]
+fn an_aborted_menu_never_waits_on_a_fetch_it_does_not_need() {
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-menu-abort");
+    git.current_branch = "develop".to_string();
+
+    assert_eq!(run_menu(&git, &MockPrompter::aborting()), Err("Aborted".to_string()));
+
+    let calls = git.calls();
+    assert!(calls.contains(&"start_fetch".to_string()) && !calls.contains(&"fetch".to_string()), "calls: {calls:?}");
+}
+
+#[test]
+fn a_subcommand_fetches_in_the_foreground_only() {
+    // No menu means nothing to overlap the fetch with.
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-cli-fetch");
+    git.current_branch = "develop".to_string();
+    git.tags = vec!["v2.4.0".to_string()];
+
+    run_lifecycle(&git, Some(Commands::Start {
+        kind: StartKind::Release { major: false, minor: true, no_worktree: true },
+    })).unwrap();
+
+    let calls = git.calls();
+    assert!(calls.contains(&"fetch".to_string()) && !calls.contains(&"start_fetch".to_string()), "calls: {calls:?}");
+}
+
 #[test]
 fn a_worktree_mode_start_release_still_stashes_a_dirty_tree() {
     let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
@@ -1187,7 +1233,7 @@ fn failed_fix_finish_keeps_branches_and_reports_the_hosting_error() {
         assert!(!git
             .calls()
             .iter()
-            .any(|call| call.starts_with("delete_branch") || call.starts_with("push:")));
+            .any(|call| call.starts_with("delete_") || call.starts_with("push:")));
         assert_eq!(hosting.calls(), [failure]);
     }
 }

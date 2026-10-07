@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] - 2026-10-07
+
+### Changed
+- The bare `gflow` menu now fetches in the background while it is open, so the wait for `git fetch` overlaps your choice. The background fetch never prompts: it runs with prompts off and SSH `BatchMode`, on top of your own `GIT_SSH_COMMAND` or `core.sshCommand`. If it fails, gflow fetches again after your choice, where passphrase and login prompts work. With `GIT_SSH` set there is no background fetch. Leaving the menu does not wait for the fetch, and Ctrl-C or closing the terminal does not kill it.
+- On Azure DevOps, gflow lists the PRs into each target branch once per run and answers every PR lookup from that list. A protected landing step needs about 2 `az` calls instead of 4–5, and finding open release branches needs 1 instead of one per branch. Each `az` call can take several seconds.
+- Choosing the PR target for `gflow finish` asks git once (`for-each-ref` with `ahead-behind`) instead of three times per remote branch. In a repo with about 100 work branches this went from 12.6 s to under 0.1 s. Git older than 2.41 falls back to the old count.
+- Pushing a release or hotfix tag is one network round trip instead of two: the push itself reports when origin already has the identical tag. A different tag of the same name on origin is now an error instead of a silent skip.
+- Finishing a protected release or hotfix deletes all its `finish/*` branches on origin in one push.
+- Startup reads the legacy `gflow.worktree.*` git config with one call per scope instead of three, and reads the worktree root once.
+
 ## [4.4.0] - 2026-10-04
 
 ### Changed
@@ -259,6 +269,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[4.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.1...v4.4.0
 [4.3.1]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.0...v4.3.1
 [4.3.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.2.0...v4.3.0

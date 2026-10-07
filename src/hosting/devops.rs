@@ -1,6 +1,13 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use super::{resolve_body_file, CliRunner, HostingPlatform, LandedPr, MergedPr, PrBody, Result};
+
+/// One az call costs seconds, so all PRs into a target are listed once and
+/// every lookup into that target is answered from the list. A full page means
+/// older PRs fell past the limit: a head missing from it is asked for directly.
+const PR_LIST_LIMIT: usize = 1000;
 
 const AUTH_REMEDY: &str = "If you are not signed in, run 'az login' (or 'az devops login' with a PAT), then re-run gflow.";
 
@@ -10,11 +17,32 @@ pub struct AzureDevOps<'a> {
     repo: String,
     runner: &'a dyn CliRunner,
     extension_verified: Cell<bool>,
+    prs_by_target: RefCell<HashMap<String, Rc<TargetPrs>>>,
+}
+
+struct TargetPrs {
+    rows: Vec<PrRow>,
+    complete: bool,
+}
+
+struct PrRow {
+    line: String,
+    status: String,
+    source: String,
+    head_sha: String,
+    merge_sha: String,
+    id: String,
+}
+
+enum Newest<'r> {
+    Found(&'r PrRow),
+    Absent,
+    Unknown,
 }
 
 impl<'a> AzureDevOps<'a> {
     pub fn new(org: String, project: String, repo: String, runner: &'a dyn CliRunner) -> Self {
-        Self { org, project, repo, runner, extension_verified: Cell::new(false) }
+        Self { org, project, repo, runner, extension_verified: Cell::new(false), prs_by_target: RefCell::default() }
     }
 
     fn org_url(&self) -> String {
@@ -50,6 +78,30 @@ impl<'a> AzureDevOps<'a> {
             .map_err(|e| format!("{e}\nThe Azure DevOps CLI extension is required. Run 'az extension add --name azure-devops'."))?;
         self.extension_verified.set(true);
         Ok(())
+    }
+
+    /// Newest first, as az lists them.
+    fn prs_into(&self, base: &str) -> Result<Rc<TargetPrs>> {
+        if let Some(prs) = self.prs_by_target.borrow().get(base) {
+            return Ok(Rc::clone(prs));
+        }
+        let mut args: Vec<String> = vec!["repos".into(), "pr".into(), "list".into()];
+        args.extend(self.repo_args());
+        args.extend([
+            "--target-branch".into(), base.into(),
+            "--status".into(), "all".into(),
+            "--top".into(), PR_LIST_LIMIT.to_string(),
+            "--query".into(), "[].[status, sourceRefName, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId]".into(),
+            "-o".into(), "tsv".into(),
+        ]);
+        let rows = self.run_az(&args)?
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(parse_pr_row)
+            .collect::<Result<Vec<_>>>()?;
+        let prs = Rc::new(TargetPrs { complete: rows.len() < PR_LIST_LIMIT, rows });
+        self.prs_by_target.borrow_mut().insert(base.to_string(), Rc::clone(&prs));
+        Ok(prs)
     }
 
     fn repo_args(&self) -> Vec<String> {
@@ -112,17 +164,44 @@ impl<'a> AzureDevOps<'a> {
         if *status != "completed" {
             return Ok(None);
         }
-        if head_sha.is_empty() || *head_sha == "None" {
+        self.landed_pr(row, head_sha, merge_commit_sha, id).map(Some)
+    }
+
+    fn landed_pr(&self, row: &str, head_sha: &str, merge_commit_sha: &str, id: &str) -> Result<LandedPr> {
+        if head_sha.is_empty() || head_sha == "None" {
             return Err(format!("Unexpected merge source commit from az: '{row}'"));
         }
-        if merge_commit_sha.is_empty() || *merge_commit_sha == "None" {
+        if merge_commit_sha.is_empty() || merge_commit_sha == "None" {
             return Err(format!("Unexpected merge commit from az: '{row}'"));
         }
-        Ok(Some(LandedPr {
+        Ok(LandedPr {
             url: self.pr_url(validate_pr_id(id)?),
             head_sha: head_sha.to_string(),
             merge_commit_sha: merge_commit_sha.to_string(),
-        }))
+        })
+    }
+}
+
+fn parse_pr_row(line: &str) -> Result<PrRow> {
+    let fields: Vec<&str> = line.split('\t').collect();
+    let [status, source, head_sha, merge_sha, id] = fields.as_slice() else {
+        return Err(format!("Unexpected PR data from az: '{line}'"));
+    };
+    Ok(PrRow {
+        line: line.to_string(),
+        status: status.to_string(),
+        source: source.strip_prefix("refs/heads/").unwrap_or(source).to_string(),
+        head_sha: head_sha.to_string(),
+        merge_sha: merge_sha.to_string(),
+        id: id.to_string(),
+    })
+}
+
+fn newest<'r>(prs: &'r TargetPrs, head: &str, status: &str) -> Newest<'r> {
+    match prs.rows.iter().find(|row| row.source == head && row.status == status) {
+        Some(row) => Newest::Found(row),
+        None if prs.complete => Newest::Absent,
+        None => Newest::Unknown,
     }
 }
 
@@ -152,19 +231,8 @@ fn description_args(body: &str) -> Vec<String> {
 
 impl HostingPlatform for AzureDevOps<'_> {
     fn create_or_get_pr(&self, head: &str, base: &str, title: &str, body: PrBody<'_>) -> Result<String> {
-        // Return the existing active PR for this head/base if there is one.
-        let mut list_args: Vec<String> = vec!["repos".into(), "pr".into(), "list".into()];
-        list_args.extend(self.repo_args());
-        list_args.extend([
-            "--source-branch".into(), head.into(),
-            "--target-branch".into(), base.into(),
-            "--status".into(), "active".into(),
-            "--query".into(), "[0].pullRequestId".into(),
-            "-o".into(), "tsv".into(),
-        ]);
-        let existing = self.run_az(&list_args)?;
-        if !existing.is_empty() {
-            return Ok(self.pr_url(validate_pr_id(&existing)?));
+        if let Some(url) = self.open_pr_to(head, base)? {
+            return Ok(url);
         }
 
         let default_paths = [
@@ -195,6 +263,7 @@ impl HostingPlatform for AzureDevOps<'_> {
             "-o".into(), "tsv".into(),
         ]);
         let created = self.run_az(&create_args)?;
+        self.prs_by_target.borrow_mut().remove(base);
         Ok(self.pr_url(validate_pr_id(&created)?))
     }
 
@@ -214,6 +283,12 @@ impl HostingPlatform for AzureDevOps<'_> {
     }
 
     fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<LandedPr>> {
+        let prs = self.prs_into(base)?;
+        match newest(&prs, head, "completed") {
+            Newest::Found(row) => return self.landed_pr(&row.line, &row.head_sha, &row.merge_sha, &row.id).map(Some),
+            Newest::Absent => return Ok(None),
+            Newest::Unknown => {}
+        }
         // --target-branch narrows to exactly this landing; az still lists
         // newest first, so [0] is the newest such PR. `completed`, not `all`:
         // this answers "has this leg landed", which a newer active or abandoned
@@ -233,6 +308,12 @@ impl HostingPlatform for AzureDevOps<'_> {
     }
 
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>> {
+        let prs = self.prs_into(base)?;
+        match newest(&prs, head, "active") {
+            Newest::Found(row) => return Ok(Some(self.pr_url(validate_pr_id(&row.id)?))),
+            Newest::Absent => return Ok(None),
+            Newest::Unknown => {}
+        }
         let mut args: Vec<String> = vec!["repos".into(), "pr".into(), "list".into()];
         args.extend(self.repo_args());
         args.extend([

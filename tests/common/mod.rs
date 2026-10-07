@@ -5,7 +5,7 @@
 
 use gflow::action::validate_branch_name;
 use gflow::editor::Editor;
-use gflow::git::{CliOutput, CommandRunner, Git};
+use gflow::git::{BranchDivergence, CliOutput, CommandRunner, Git, RunningCommand};
 use gflow::hosting::{CliRunner, HostingPlatform, PrBody};
 use gflow::prompt::Prompter;
 use gflow::version_script::VersionScript;
@@ -27,6 +27,8 @@ pub struct MockGit {
     /// Per-pattern results for `list_branches_matching`; misses fall back to `branches_matching`.
     pub branches_matching_by: HashMap<String, Vec<String>>,
     pub remote_branches: Vec<String>,
+    /// `None` answers like git < 2.41, which has no `%(ahead-behind)`.
+    pub remote_divergence: Option<Vec<BranchDivergence>>,
     /// Per-(a, b) merge bases; falls back to `MERGE_BASE` when absent.
     pub merge_bases: HashMap<(String, String), String>,
     pub rev_list_count_result: u32,
@@ -130,6 +132,7 @@ impl MockGit {
             branches_matching: Vec::new(),
             branches_matching_by: HashMap::new(),
             remote_branches: Vec::new(),
+            remote_divergence: None,
             merge_bases: HashMap::new(),
             rev_list_count_result: 0,
             rev_list_counts: HashMap::new(),
@@ -218,6 +221,10 @@ impl Git for MockGit {
         Ok(())
     }
 
+    fn start_fetch(&self) {
+        let _ = self.record("start_fetch".to_string());
+    }
+
     fn checkout(&self, branch: &str) -> Result<(), String> {
         self.record(format!("checkout:{branch}"))?;
         Ok(())
@@ -246,9 +253,9 @@ impl Git for MockGit {
         Ok(())
     }
 
-    fn push_tag(&self, tag: &str) -> Result<(), String> {
+    fn push_tag(&self, tag: &str) -> Result<bool, String> {
         self.record(format!("push_tag:{tag}"))?;
-        Ok(())
+        Ok(!self.existing_remote_tags.contains(tag))
     }
 
     fn create_tag(&self, tag: &str, message: &str) -> Result<(), String> {
@@ -307,8 +314,8 @@ impl Git for MockGit {
         Ok(())
     }
 
-    fn delete_branch_remote(&self, branch: &str) -> Result<(), String> {
-        self.record(format!("delete_branch_remote:{branch}"))?;
+    fn delete_remote_branches(&self, branches: &[&str]) -> Result<(), String> {
+        self.record(format!("delete_remote_branches:{}", branches.join(" ")))?;
         Ok(())
     }
 
@@ -320,6 +327,11 @@ impl Git for MockGit {
     fn list_remote_branches(&self) -> Result<Vec<String>, String> {
         self.record("list_remote_branches".to_string())?;
         Ok(self.remote_branches.clone())
+    }
+
+    fn remote_branch_divergence(&self, from: &str) -> Result<Vec<BranchDivergence>, String> {
+        self.record(format!("remote_branch_divergence:{from}"))?;
+        self.remote_divergence.clone().ok_or_else(|| "fatal: unknown field name: ahead-behind".to_string())
     }
 
     fn merge_base(&self, a: &str, b: &str) -> Result<String, String> {
@@ -380,10 +392,6 @@ impl Git for MockGit {
         Ok(self.existing_remote_branches.contains(branch))
     }
 
-    fn remote_tag_exists(&self, tag: &str) -> Result<bool, String> {
-        self.record(format!("remote_tag_exists:{tag}"))?;
-        Ok(self.existing_remote_tags.contains(tag))
-    }
 
     fn is_pushed(&self, branch: &str) -> Result<bool, String> {
         self.record(format!("is_pushed:{branch}"))?;
@@ -421,15 +429,22 @@ impl Git for MockGit {
             .or_else(|| self.config_global.get(key))
             .cloned())
     }
-    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>, String> {
+    fn config_section_at(&self, section: &str, global: bool) -> Result<Vec<(String, String)>, String> {
         let scope = if global { "global" } else { "local" };
-        self.record(format!("get_config_at:{scope}:{key}"))?;
+        self.record(format!("config_section_at:{scope}:{section}"))?;
         let source = if global {
             &self.config_global
         } else {
             &self.config
         };
-        Ok(source.get(key).cloned())
+        let prefix = format!("{section}.");
+        let mut values: Vec<(String, String)> = source
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        values.sort();
+        Ok(values)
     }
 
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<(), String> {
@@ -949,7 +964,31 @@ impl MockCommandRunner {
     }
 }
 
+/// A spawned mock process: it already holds the output it will report, and
+/// records when it is waited for.
+pub struct MockRunning<'a> {
+    calls: &'a RefCell<Vec<String>>,
+    command: String,
+    output: CliOutput,
+}
+
+impl RunningCommand for MockRunning<'_> {
+    fn wait(self: Box<Self>) -> Result<CliOutput, String> {
+        self.calls.borrow_mut().push(format!("wait: {}", self.command));
+        Ok(self.output)
+    }
+}
+
 impl CommandRunner for MockCommandRunner {
+    fn spawn(&self, program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<Box<dyn RunningCommand + '_>, String> {
+        let env: Vec<String> = env.iter().map(|(key, value)| format!("{key}={value}")).collect();
+        let command = format!("{program} {}", args.join(" "));
+        let call = format!("spawn {}: {command}", env.join(" "));
+        self.calls.borrow_mut().push(call.clone());
+        let output = self.responses.borrow_mut().pop_front().ok_or_else(|| format!("MockCommandRunner: unscripted {call}"))?;
+        Ok(Box::new(MockRunning { calls: &self.calls, command, output }))
+    }
+
     fn run(&self, program: &str, args: &[&str]) -> Result<CliOutput, String> {
         self.calls
             .borrow_mut()

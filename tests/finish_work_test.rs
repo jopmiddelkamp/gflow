@@ -3,6 +3,7 @@ mod common;
 use common::{MockGit, MockHosting, MockPrompter};
 use gflow::flows::finish_work::{finish_release_fix, finish_hotfix_fix, finish_release_chore, finish_work_branch};
 use gflow::git::branch::BranchType;
+use gflow::git::BranchDivergence;
 
 #[test]
 fn finish_release_fix_pushes_and_creates_pr() {
@@ -236,6 +237,53 @@ fn add_candidate(git: &mut MockGit, current: &str, branch: &str, base: &str, our
     git.rev_list_counts.insert((base.to_string(), branch.to_string()), theirs);
 }
 
+fn divergence(branch: &str, ahead: u32, behind: u32) -> BranchDivergence {
+    BranchDivergence { branch: branch.into(), ahead, behind }
+}
+
+#[test]
+fn parent_detection_reads_every_branch_in_one_query() {
+    // Three git calls per remote branch took 12 s in a repo with 97 of them.
+    let mut git = MockGit::new();
+    git.current_branch = "feature/child".to_string();
+    git.remote_divergence = Some(vec![
+        divergence("develop", 9, 5),
+        divergence("feature/near", 0, 2),
+        // Branched from us: holds all of ours plus its own — a child, not a parent.
+        divergence("feature/stacked", 6, 0),
+        divergence("feature/child", 0, 0),
+        divergence("release/1.0.0", 0, 1),
+        divergence("chore/set-version-1.2.0", 0, 1),
+    ]);
+    let hosting = MockHosting::new();
+    let prompter = MockPrompter::scripted(&[0]);
+    let branch_type = BranchType::Feature { name: "child".to_string() };
+
+    finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
+
+    assert_eq!(prompter.calls(), vec!["select:PR target branch:[feature/near, develop]"]);
+    let calls = git.calls();
+    assert!(calls.contains(&"remote_branch_divergence:feature/child".to_string()), "got: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("merge_base") || c.starts_with("rev_list_count") || c == "list_remote_branches"),
+        "no per-branch calls once the single query answered; got: {calls:?}");
+}
+
+#[test]
+fn parent_detection_counts_per_branch_when_git_cannot_answer_in_one_query() {
+    // git < 2.41 has no %(ahead-behind); MockGit answers like that by default.
+    let mut git = MockGit::new();
+    git.current_branch = "feature/child".to_string();
+    git.remote_branches = vec!["develop".to_string()];
+    let hosting = MockHosting::new();
+
+    finish_work_branch(&git, &hosting, &MockPrompter::new(), &BranchType::Feature { name: "child".to_string() }, Some(false), None, None, false).unwrap();
+
+    let calls = git.calls();
+    let query = calls.iter().position(|c| c == "remote_branch_divergence:feature/child").expect("the single query is tried first");
+    let listing = calls.iter().position(|c| c == "list_remote_branches").expect("then the per-branch path");
+    assert!(query < listing, "got: {calls:?}");
+}
+
 #[test]
 fn parent_candidates_sorted_by_merge_distance_ascending() {
     let mut git = MockGit::new();
@@ -432,7 +480,7 @@ fn merged_pr_in_worktree_cleans_up_branch_and_worktree() {
         // Remote deletion comes first: after remove_current_worktree the process
         // cwd is gone, so it must be the last git call.
         "remote_branch_exists:feature/task-a",
-        "delete_branch_remote:feature/task-a",
+        "delete_remote_branches:feature/task-a",
         "is_linked_worktree",
         "detach_head",
         "delete_branch_local:feature/task-a",
@@ -760,7 +808,7 @@ fn work_finish_stops_after_failed_cleanup_step() {
             "head_sha",
             "commit_parent_count:merged",
             "remote_branch_exists:feature/example",
-            "delete_branch_remote:feature/example",
+            "delete_remote_branches:feature/example",
             "is_linked_worktree",
             "delete_branch_local:feature/example",
         ];
@@ -838,7 +886,7 @@ fn work_finish_stops_after_hosting_errors() {
             false,
         );
         assert_hosting_failure(result, &hosting, call);
-        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
     }
 }
 

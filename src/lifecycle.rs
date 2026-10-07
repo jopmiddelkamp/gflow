@@ -78,6 +78,10 @@ pub fn run(
         Some(Commands::Finish { accept_merge_type: true, .. }) | Some(Commands::Sync { accept_merge_type: true })
     );
 
+    if command.is_none() {
+        git.start_fetch();
+    }
+
     // Resolve the action up-front so we can decide whether to fetch / stash / etc.
     let action = resolve_action_with_state(command, prompter, &branch_type, &branch_name, resume_state.as_ref(), wt_config.enabled, &main_branch)?;
 
