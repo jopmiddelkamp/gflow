@@ -172,22 +172,33 @@ fn a_merged_pr_to_lookup_failure_names_the_auth_fix() {
 
 // --- Azure DevOps ---
 
+const AZ_PR_LIST: &str = "az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop";
+const AZ_ROWS: &str = "--status all --top 1000 \
+--query [].[status, sourceRefName, targetRefName, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv";
+
+fn az_prs_into(base: &str) -> String {
+    format!("{AZ_PR_LIST} --target-branch {base} {AZ_ROWS}")
+}
+
+fn az_prs_from(head: &str) -> String {
+    format!("{AZ_PR_LIST} --source-branch {head} {AZ_ROWS}")
+}
+
 #[test]
 fn an_active_ado_pr_is_reused_and_its_url_synthesized() {
     // az's webUrl is unreliable, so the URL is built from the parsed coordinates.
-    let runner = az_scripted(&[Ok("abandoned\trefs/heads/feature/x\tabc\t\t2661\nactive\trefs/heads/feature/x\tabc\t\t2662")]);
+    let runner = az_scripted(&[Ok("abandoned\trefs/heads/feature/x\trefs/heads/develop\tabc\t\t2661\n\
+active\trefs/heads/feature/x\trefs/heads/develop\tabc\t\t2662")]);
 
     let url = ado(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
 
     assert_eq!(url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/2662", "only an open PR may be reused");
-    assert_eq!(az_calls(&runner), vec!["az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
---target-branch develop --status all --top 1000 \
---query [].[status, sourceRefName, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"], "no create call may follow");
+    assert_eq!(az_calls(&runner), vec![az_prs_into("develop")], "no create call may follow");
 }
 
 #[test]
 fn no_active_ado_pr_creates_one() {
-    let runner = az_scripted(&[Ok("completed\trefs/heads/feature/x\tabc\tdef\t2600"), Ok("2663")]);
+    let runner = az_scripted(&[Ok("completed\trefs/heads/feature/x\trefs/heads/develop\tabc\tdef\t2600"), Ok("2663")]);
 
     let url = ado(&runner).create_or_get_pr("feature/x", "develop", "feat: x", PrBody::NativeDefault).unwrap();
 
@@ -210,34 +221,82 @@ fn an_unreadable_pr_template_is_a_hard_error_naming_the_path() {
 }
 
 #[test]
-fn ado_merged_pr_queries_the_newest_pr_of_any_status() {
-    let runner = az_scripted(&[Ok("completed\tabc123\tdeadbeef\trefs/heads/develop\t49")]);
+fn ado_merged_pr_is_the_branchs_newest_pr_only_when_completed() {
+    for (case, rows, expected) in [
+        ("no PR at all", "", None),
+        ("a newer active PR keeps the branch in play",
+            "active\trefs/heads/feature/x\trefs/heads/develop\th2\tm2\t50\n\
+completed\trefs/heads/feature/x\trefs/heads/develop\th1\tm1\t49", None),
+        ("a newer abandoned PR keeps the branch in play",
+            "abandoned\trefs/heads/feature/x\trefs/heads/develop\th2\t\t50\n\
+completed\trefs/heads/feature/x\trefs/heads/develop\th1\tm1\t49", None),
+        ("the newest PR is merged",
+            "completed\trefs/heads/feature/x\trefs/heads/develop\tabc123\tdeadbeef\t49",
+            Some(("https://dev.azure.com/beans/Shop/_git/shop/pullrequest/49", "abc123", "deadbeef", "develop"))),
+    ] {
+        let runner = az_scripted(&[Ok(rows)]);
 
-    let pr = ado(&runner).merged_pr("feature/x").unwrap().unwrap();
+        let pr = ado(&runner).merged_pr("feature/x").unwrap();
 
-    assert_eq!(pr.url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/49");
-    assert_eq!(pr.head_sha, "abc123");
-    assert_eq!(pr.merge_commit_sha, "deadbeef");
-    let call = &az_calls(&runner)[0];
-    assert!(call.contains("--status all"), "got: {call}");
-    // The `[0:1]` slice, not `[0]`: a multiselect on a plain index is a flat list
-    // of scalars, which az's tsv writer prints one value per line. Only a list of
-    // lists becomes a single tab-separated row, which is what the parser reads.
-    assert!(call.contains("[0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, targetRefName, pullRequestId]"),
-        "the tsv row parser depends on this exact projection and order; got: {call}");
+        let pr = pr.as_ref().map(|pr| (pr.url.as_str(), pr.head_sha.as_str(), pr.merge_commit_sha.as_str(), pr.base.as_str()));
+        assert_eq!(pr, expected, "{case}");
+        assert_eq!(az_calls(&runner), vec![az_prs_from("feature/x")], "{case}");
+    }
+}
+
+#[test]
+fn ado_a_completed_pr_without_its_commits_or_id_is_an_error() {
+    for (row, expected) in [
+        ("completed\trefs/heads/x\trefs/heads/main\t\tdeadbeef\t49", "Unexpected merge source commit from az:"),
+        ("completed\trefs/heads/x\trefs/heads/main\tNone\tdeadbeef\t49", "Unexpected merge source commit from az:"),
+        ("completed\trefs/heads/x\trefs/heads/main\tabc\t\t49", "Unexpected merge commit from az:"),
+        ("completed\trefs/heads/x\trefs/heads/main\tabc\tNone\t49", "Unexpected merge commit from az:"),
+        ("completed\trefs/heads/x\trefs/heads/main\tabc\tdeadbeef\tNone", "Unexpected az pull request id: 'None'"),
+    ] {
+        let runner = az_scripted(&[Ok(row)]);
+        let err = ado(&runner).merged_pr("x").unwrap_err();
+        assert!(err.contains(expected), "merged_pr {row:?}: {err}");
+
+        let runner = az_scripted(&[Ok(row)]);
+        let err = ado(&runner).merged_pr_to("x", "main").unwrap_err();
+        assert!(err.contains(expected), "merged_pr_to {row:?}: {err}");
+    }
+}
+
+#[test]
+fn ado_a_work_finish_asks_az_once_for_its_prs() {
+    // merged_pr loads the branch's own PRs; the open-PR check before creating
+    // one reads the same list instead of listing every PR into the base.
+    for (case, rows, creates) in [
+        ("first finish", "", true),
+        ("re-run with the PR open", "active\trefs/heads/feature/x\trefs/heads/develop\th\t\t62", false),
+    ] {
+        let runner = az_scripted(&[Ok(rows), Ok("63")]);
+        let ado = ado(&runner);
+
+        assert_eq!(ado.merged_pr("feature/x").unwrap(), None, "{case}");
+        ado.create_or_get_pr("feature/x", "develop", "feat: x", PrBody::Empty).unwrap();
+
+        let calls = az_calls(&runner);
+        assert_eq!(calls[0], az_prs_from("feature/x"), "{case}");
+        assert_eq!(calls.len(), if creates { 2 } else { 1 }, "{case}: {calls:?}");
+    }
 }
 
 /// A full page of PRs into a target, none from the heads the tests ask about.
-fn truncated_list() -> String {
-    (0..1000).map(|i| format!("completed\trefs/heads/feature/other-{i}\th{i}\tm{i}\t{i}")).collect::<Vec<_>>().join("\n")
+fn truncated_list(base: &str) -> String {
+    (0..1000)
+        .map(|i| format!("completed\trefs/heads/feature/other-{i}\trefs/heads/{base}\th{i}\tm{i}\t{i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
 fn ado_lookups_into_one_target_share_one_list_query() {
     // One az call costs seconds; a protected landing asks about the same
     // target up to five times per run.
-    let runner = az_scripted(&[Ok("active\trefs/heads/release/1.0.0\taaa\t\t61\n\
-completed\trefs/heads/finish/release-1.0.0-into-main\tbbb\tccc\t60")]);
+    let runner = az_scripted(&[Ok("active\trefs/heads/release/1.0.0\trefs/heads/main\taaa\t\t61\n\
+completed\trefs/heads/finish/release-1.0.0-into-main\trefs/heads/main\tbbb\tccc\t60")]);
     let ado = ado(&runner);
 
     let open = ado.open_pr_to("release/1.0.0", "main").unwrap().unwrap();
@@ -248,16 +307,14 @@ completed\trefs/heads/finish/release-1.0.0-into-main\tbbb\tccc\t60")]);
     assert!(landed.url.ends_with("/pullrequest/60"), "got: {}", landed.url);
     assert_eq!((landed.head_sha.as_str(), landed.merge_commit_sha.as_str()), ("bbb", "ccc"));
     assert_eq!(legacy, None, "a complete list without a completed PR means none exists");
-    assert_eq!(az_calls(&runner), vec!["az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
---target-branch main --status all --top 1000 \
---query [].[status, sourceRefName, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"]);
+    assert_eq!(az_calls(&runner), vec![az_prs_into("main")]);
 }
 
 #[test]
 fn ado_the_newest_pr_of_each_status_decides() {
-    let runner = az_scripted(&[Ok("active\trefs/heads/x\th3\t\t9\n\
-completed\trefs/heads/x\th2\tm2\t7\n\
-completed\trefs/heads/x\th1\tm1\t5")]);
+    let runner = az_scripted(&[Ok("active\trefs/heads/x\trefs/heads/main\th3\t\t9\n\
+completed\trefs/heads/x\trefs/heads/main\th2\tm2\t7\n\
+completed\trefs/heads/x\trefs/heads/main\th1\tm1\t5")]);
     let ado = ado(&runner);
 
     // A newer active PR must not erase the fact that this leg already landed.
@@ -272,7 +329,7 @@ completed\trefs/heads/x\th1\tm1\t5")]);
 fn ado_a_head_found_in_a_truncated_list_needs_no_second_query() {
     // The list is newest first, so a head's first row is its newest PR even
     // when older PRs fell past the limit.
-    let list = format!("completed\trefs/heads/x\th\tm\t1001\n{}", truncated_list());
+    let list = format!("completed\trefs/heads/x\trefs/heads/main\th\tm\t1001\n{}", truncated_list("main"));
     let runner = az_scripted(&[Ok(&list)]);
 
     let landed = ado(&runner).merged_pr_to("x", "main").unwrap().unwrap();
@@ -282,38 +339,28 @@ fn ado_a_head_found_in_a_truncated_list_needs_no_second_query() {
 }
 
 #[test]
-fn ado_a_head_missing_from_a_truncated_list_is_asked_for_directly() {
-    let list = truncated_list();
-    let runner = az_scripted(&[Ok(&list), Ok("completed\tabc123\tdeadbeef\t49"), Ok("61")]);
+fn ado_a_head_missing_from_a_truncated_list_loads_its_own_list_once() {
+    // develop gathers more than 1000 PRs: a head absent from that page may
+    // still have older PRs, and only its own list can tell.
+    let list = truncated_list("develop");
+    let own = "completed\trefs/heads/feature/x\trefs/heads/main\th9\tm9\t70\n\
+active\trefs/heads/feature/x\trefs/heads/develop\th8\t\t61\n\
+completed\trefs/heads/feature/x\trefs/heads/develop\tabc123\tdeadbeef\t49";
+    let runner = az_scripted(&[Ok(&list), Ok(own)]);
     let ado = ado(&runner);
 
     let pr = ado.merged_pr_to("feature/x", "develop").unwrap().unwrap();
     let open = ado.open_pr_to("feature/x", "develop").unwrap().unwrap();
 
-    assert_eq!(pr.url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/49");
-    assert_eq!(pr.head_sha, "abc123");
-    assert_eq!(pr.merge_commit_sha, "deadbeef");
+    assert_eq!(pr.url, "https://dev.azure.com/beans/Shop/_git/shop/pullrequest/49", "a landing into another base must not count");
+    assert_eq!((pr.head_sha.as_str(), pr.merge_commit_sha.as_str()), ("abc123", "deadbeef"));
     assert!(open.ends_with("/pullrequest/61"), "got: {open}");
-    let calls = az_calls(&runner);
-    assert_eq!(calls.len(), 3, "the list is fetched once; got: {calls:?}");
-    // `--status completed`, not `all`: a newer active or abandoned PR must not
-    // erase the fact that this leg already landed.
-    assert_eq!(
-        calls[1],
-        "az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
---source-branch feature/x --target-branch develop --status completed \
---query [0:1].[status, lastMergeSourceCommit.commitId, lastMergeCommit.commitId, pullRequestId] -o tsv"
-    );
-    assert_eq!(
-        calls[2],
-        "az repos pr list --organization https://dev.azure.com/beans --project Shop --repository shop \
---source-branch feature/x --target-branch develop --status active --query [0].pullRequestId -o tsv"
-    );
+    assert_eq!(az_calls(&runner), vec![az_prs_into("develop"), az_prs_from("feature/x")]);
 }
 
 #[test]
-fn ado_direct_lookups_past_a_truncated_list_keep_their_failure_rules() {
-    let list = truncated_list();
+fn ado_a_heads_own_list_keeps_the_failure_rules() {
+    let list = truncated_list("main");
 
     let runner = az_scripted(&[Ok(&list), Err("access denied")]);
     let err = ado(&runner).merged_pr_to("x", "main").unwrap_err();
@@ -326,39 +373,43 @@ fn ado_direct_lookups_past_a_truncated_list_keep_their_failure_rules() {
     let runner = az_scripted(&[Ok(&list), Ok("")]);
     assert_eq!(ado(&runner).open_pr_to("x", "main").unwrap(), None);
 
-    let runner = az_scripted(&[Ok(&list), Ok("None")]);
+    let runner = az_scripted(&[Ok(&list), Ok("active\trefs/heads/x\trefs/heads/main\th\t\tNone")]);
     let err = ado(&runner).open_pr_to("x", "main").unwrap_err();
     assert!(err.contains("Unexpected az pull request id: 'None'"), "got: {err}");
 }
 
 #[test]
-fn ado_creating_a_pr_refreshes_that_targets_list() {
-    let runner = az_scripted(&[Ok(""), Ok("62"), Ok("active\trefs/heads/feature/x\th\t\t62")]);
-    let ado = ado(&runner);
+fn ado_creating_a_pr_refreshes_the_lists_that_answered_for_it() {
+    let new_pr = "active\trefs/heads/feature/x\trefs/heads/develop\th\t\t62";
+    for (case, read_own_list_first, reload) in [
+        ("answered from the target's list", false, az_prs_into("develop")),
+        ("answered from the branch's own list", true, az_prs_into("develop")),
+    ] {
+        let runner = az_scripted(&[Ok(""), Ok("62"), Ok(new_pr)]);
+        let ado = ado(&runner);
+        if read_own_list_first {
+            ado.merged_pr("feature/x").unwrap();
+        }
 
-    ado.create_or_get_pr("feature/x", "develop", "feat: x", PrBody::Empty).unwrap();
-    let open = ado.open_pr_to("feature/x", "develop").unwrap().unwrap();
+        ado.create_or_get_pr("feature/x", "develop", "feat: x", PrBody::Empty).unwrap();
+        let open = ado.open_pr_to("feature/x", "develop").unwrap().unwrap();
 
-    assert!(open.ends_with("/pullrequest/62"), "the new PR must be visible; got: {open}");
-    assert_eq!(az_calls(&runner).len(), 3);
+        assert!(open.ends_with("/pullrequest/62"), "{case}: the new PR must be visible; got: {open}");
+        let calls = az_calls(&runner);
+        assert_eq!(calls.last(), Some(&reload), "{case}: {calls:?}");
+        assert_eq!(calls.len(), 3, "{case}: {calls:?}");
+    }
 }
 
 #[test]
 fn ado_a_malformed_list_row_is_an_error() {
-    let runner = az_scripted(&[Ok("completed\trefs/heads/x\tmissing-fields")]);
+    for (case, lookup) in [("target list", false), ("branch list", true)] {
+        let runner = az_scripted(&[Ok("completed\trefs/heads/x\tmissing-fields")]);
 
-    let err = ado(&runner).open_pr_to("x", "main").unwrap_err();
+        let err = if lookup { ado(&runner).merged_pr("x").map(|_| ()) } else { ado(&runner).open_pr_to("x", "main").map(|_| ()) }.unwrap_err();
 
-    assert!(err.contains("Unexpected PR data from az:") && err.contains("missing-fields"), "got: {err}");
-}
-
-#[test]
-fn ado_a_landed_row_without_a_merge_commit_is_an_error() {
-    let runner = az_scripted(&[Ok("completed\trefs/heads/x\tabc\tNone\t49")]);
-
-    let err = ado(&runner).merged_pr_to("x", "main").unwrap_err();
-
-    assert!(err.contains("Unexpected merge commit from az:"), "got: {err}");
+        assert!(err.contains("Unexpected PR data from az:") && err.contains("missing-fields"), "{case}: {err}");
+    }
 }
 
 #[test]
@@ -369,7 +420,7 @@ fn the_ado_extension_is_verified_once_before_the_first_az_call() {
     let ado = ado(&runner);
 
     ado.merged_pr("feature/x").unwrap();
-    ado.open_pr_to("feature/x", "develop").unwrap();
+    ado.open_pr_to("release/1.0.0", "develop").unwrap();
 
     let calls = runner.calls();
     assert_eq!(calls[0], "az extension show --name azure-devops");
@@ -420,7 +471,7 @@ fn gh_open_pr_to_empty_result_is_none() {
 
 #[test]
 fn az_open_pr_to_lists_active_prs_and_synthesizes_the_url() {
-    let runner = az_scripted(&[Ok("active\trefs/heads/release/1.2.0\th\t\t61")]);
+    let runner = az_scripted(&[Ok("active\trefs/heads/release/1.2.0\trefs/heads/develop\th\t\t61")]);
 
     let url = ado(&runner).open_pr_to("release/1.2.0", "develop").unwrap().unwrap();
 
@@ -447,7 +498,7 @@ fn github_open_pr_failure_keeps_the_authentication_remedy() {
 fn azure_create_rejects_failed_or_invalid_responses() {
     for responses in [
         vec![Ok("extension"), Err("list unavailable")],
-        vec![Ok("extension"), Ok("active\trefs/heads/feature/x\th\t\tNone")],
+        vec![Ok("extension"), Ok("active\trefs/heads/feature/x\trefs/heads/develop\th\t\tNone")],
         vec![Ok("extension"), Ok(""), Err("create unavailable")],
         vec![Ok("extension"), Ok(""), Ok("None")],
     ] {
@@ -483,7 +534,7 @@ fn azure_landed_pr_failure_does_not_become_an_unmerged_result() {
 
 #[test]
 fn azure_open_pr_rejects_failed_or_invalid_responses() {
-    for response in [Err("access denied"), Ok("active\trefs/heads/release/1.0.0\th\t\tNone")] {
+    for response in [Err("access denied"), Ok("active\trefs/heads/release/1.0.0\trefs/heads/main\th\t\tNone")] {
         let runner = MockCliRunner::scripted(&[Ok("extension"), response]);
         let hosting = AzureDevOps::new("org".into(), "project".into(), "repo".into(), &runner);
         let error = hosting.open_pr_to("release/1.0.0", "main").unwrap_err();
@@ -506,8 +557,7 @@ fn azure_rejects_malformed_merged_rows_instead_of_authorizing_cleanup() {
             None => hosting.merged_pr("release/1.0.0").unwrap_err(),
             Some(base) => hosting.merged_pr_to("release/1.0.0", base).unwrap_err(),
         };
-        let expected = if base.is_some() { "Unexpected PR data from az:" } else { "Unexpected merged-PR data from az:" };
-        assert!(error.contains(expected), "got: {error}");
+        assert!(error.contains("Unexpected PR data from az:"), "got: {error}");
         assert!(error.contains("missing-fields"));
     }
 }

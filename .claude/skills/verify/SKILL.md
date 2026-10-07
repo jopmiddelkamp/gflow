@@ -16,9 +16,9 @@ that comes first on `PATH`. Never point it at a real repo or remote.
   rewrite `'v3/org/proj/repo'` to `$V/origin.git`, `exec sh -c "$cmd"`. Knobs:
   a delay (latency) and "fail when BatchMode" (passphrase key without agent).
 - `fake-az`: log calls; PR state in a tsv (`status source head merge id target`).
-  Serve `extension show`, the per-target list (`--target-branch` only, newest
-  first via `tail -r`), the per-head list (`merged_pr`), the per-pair fallback,
-  and `create`. A `complete-pr src tgt` helper merges `--no-ff` on origin and
+  Serve `extension show`, `pr list` filtered by `--target-branch` or
+  `--source-branch` (rows `status refs/heads/src refs/heads/tgt head merge id`,
+  newest first via `tail -r`), and `create`. A `complete-pr src tgt` helper merges `--no-ff` on origin and
   marks the row completed with head + merge SHAs.
 - Logging `git` wrapper (`exec /usr/bin/git`); optional "reject ahead-behind"
   knob to simulate git < 2.41.
@@ -42,4 +42,4 @@ Menu abort during a slow fetch (exit time, fetch finishes detached); fetch that
 needs a prompt (foreground retry); protected release finish over three runs
 (az list calls per run, `push --porcelain` tag skip, one `push --delete` for all
 finish branches); work-branch finish with several candidates, with and without
-ahead-behind; a full 1000-row PR list (direct lookup, then reuse).
+ahead-behind; a full 1000-row PR list (the head's own list, then reuse).
