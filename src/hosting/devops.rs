@@ -263,6 +263,10 @@ impl HostingPlatform for AzureDevOps<'_> {
             .map(|row| validate_pr_id(&row.id).map(|id| self.pr_url(id)))
             .transpose()
     }
+
+    fn prefetch_prs(&self, head: &str) -> Result<()> {
+        self.prs_from(head).map(|_| ())
+    }
 }
 
 #[cfg(test)]

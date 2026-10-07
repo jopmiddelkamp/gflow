@@ -914,8 +914,8 @@ fn an_aborted_menu_never_waits_on_a_fetch_it_does_not_need() {
 }
 
 #[test]
-fn a_subcommand_fetches_in_the_foreground_only() {
-    // No menu means nothing to overlap the fetch with.
+fn a_subcommand_fetches_in_the_background_too() {
+    // A work finish asks the hosting platform for its PRs meanwhile.
     let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-cli-fetch");
     git.current_branch = "develop".to_string();
     git.tags = vec!["v2.4.0".to_string()];
@@ -925,7 +925,59 @@ fn a_subcommand_fetches_in_the_foreground_only() {
     })).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"fetch".to_string()) && !calls.contains(&"start_fetch".to_string()), "calls: {calls:?}");
+    let started = calls.iter().position(|c| c == "start_fetch").expect("a subcommand starts the fetch");
+    let awaited = calls.iter().position(|c| c == "fetch").expect("and awaits it before acting");
+    assert!(started < awaited, "calls: {calls:?}");
+}
+
+#[test]
+fn an_abort_never_fetches() {
+    let git = release_git();
+
+    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false })).unwrap();
+
+    let calls = git.calls();
+    assert!(!calls.iter().any(|c| c == "start_fetch" || c == "fetch"), "calls: {calls:?}");
+}
+
+#[test]
+fn a_work_finish_asks_for_its_prs_while_the_fetch_runs() {
+    // The answer does not depend on the fetch, and on Azure it costs seconds.
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-prefetch-order");
+    git.current_branch = "feature/x".to_string();
+    git.config.insert(MAIN_BRANCH_KEY.to_string(), "main".to_string());
+    let mut hosting = MockHosting::new();
+    hosting.fail_call = Some(("prefetch_prs:feature/x".to_string(), 1));
+
+    let error = run_with(&git, &hosting, finish_cmd()).unwrap_err();
+
+    assert_eq!(error, "injected hosting failure: prefetch_prs:feature/x");
+    assert_eq!(git.calls(), vec!["current_branch", "git_dir", "get_config:gflow.branch.main", "start_fetch", "is_mid_merge", "has_unmerged_paths"],
+        "asked after the fetch started, before waiting for it, before any change");
+}
+
+#[test]
+fn only_work_finishes_prefetch_their_prs() {
+    let feature_finish = Some(Commands::Finish { breaking: Some(false), base: None, abort: false, accept_merge_type: false });
+    let start_release = Some(Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: true } });
+    for (branch, command, prefetched) in [
+        ("feature/x", feature_finish, true),
+        ("release-fix/2.5.0/login", finish_cmd(), true),
+        ("hotfix-fix/2.4.1/login", finish_cmd(), true),
+        ("release-chore/2.5.0/version", finish_cmd(), true),
+        ("develop", start_release, false),
+    ] {
+        let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-prefetch-scope");
+        git.current_branch = branch.to_string();
+        git.tags = vec!["v2.4.0".to_string()];
+        let hosting = MockHosting::new();
+
+        run_with(&git, &hosting, command).unwrap();
+
+        let calls = hosting.calls();
+        assert_eq!(calls.first() == Some(&format!("prefetch_prs:{branch}")), prefetched, "{branch}: {calls:?}");
+        assert_eq!(calls.iter().filter(|c| c.starts_with("prefetch_prs:")).count(), usize::from(prefetched), "{branch}: {calls:?}");
+    }
 }
 
 #[test]
@@ -1210,7 +1262,8 @@ fn missing_template_root_stops_each_finish_before_publication() {
             "injected git failure: worktree_root"
         );
         assert_eq!(git.calls().last().unwrap(), "worktree_root");
-        assert!(hosting.calls().is_empty());
+        let calls = hosting.calls();
+        assert!(calls.iter().all(|call| call.starts_with("prefetch_prs:")), "only reads before publication: {calls:?}");
     }
 }
 
@@ -1234,7 +1287,7 @@ fn failed_fix_finish_keeps_branches_and_reports_the_hosting_error() {
             .calls()
             .iter()
             .any(|call| call.starts_with("delete_") || call.starts_with("push:")));
-        assert_eq!(hosting.calls(), [failure]);
+        assert_eq!(hosting.calls(), [format!("prefetch_prs:{branch}"), failure]);
     }
 }
 

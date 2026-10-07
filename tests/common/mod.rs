@@ -645,6 +645,10 @@ impl HostingPlatform for MockHosting {
         Ok(self.merged_pr.clone())
     }
 
+    fn prefetch_prs(&self, head: &str) -> Result<(), String> {
+        self.record(format!("prefetch_prs:{head}"))
+    }
+
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>, String> {
         self.record(format!("open_pr_to:{head}:{base}"))?;
         Ok(self

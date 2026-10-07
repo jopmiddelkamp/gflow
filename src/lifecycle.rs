@@ -78,7 +78,7 @@ pub fn run(
         Some(Commands::Finish { accept_merge_type: true, .. }) | Some(Commands::Sync { accept_merge_type: true })
     );
 
-    if command.is_none() {
+    if !matches!(command, Some(Commands::Finish { abort: true, .. })) {
         git.start_fetch();
     }
 
@@ -97,6 +97,11 @@ pub fn run(
     }
 
     println!("Fetching latest...");
+    // The flow's first question is about this branch's PRs, and the answer
+    // does not depend on the fetch.
+    if matches!(action, Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix | Action::FinishReleaseChore) {
+        hosting.prefetch_prs(&branch_name)?;
+    }
     git.fetch()?;
 
     // Optional worktree flow: when enabled (and not opted out) for a start, treat

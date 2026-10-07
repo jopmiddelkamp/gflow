@@ -413,6 +413,39 @@ fn ado_a_malformed_list_row_is_an_error() {
 }
 
 #[test]
+fn ado_prefetched_prs_answer_the_branchs_later_lookups() {
+    let runner = az_scripted(&[Ok("completed\trefs/heads/feature/x\trefs/heads/develop\tabc\tdef\t49")]);
+    let ado = ado(&runner);
+
+    ado.prefetch_prs("feature/x").unwrap();
+    assert_eq!(az_calls(&runner), vec![az_prs_from("feature/x")]);
+    let pr = ado.merged_pr("feature/x").unwrap().unwrap();
+    let open = ado.open_pr_to("feature/x", "develop").unwrap();
+
+    assert_eq!((pr.base.as_str(), open), ("develop", None));
+    assert_eq!(az_calls(&runner).len(), 1, "the lookups reuse the prefetched list");
+}
+
+#[test]
+fn ado_a_failed_prefetch_names_the_login_commands() {
+    let runner = az_scripted(&[Err("az repos pr list failed: TF400813")]);
+
+    let err = ado(&runner).prefetch_prs("feature/x").unwrap_err();
+
+    assert!(err.contains("TF400813") && err.contains("az login"), "got: {err}");
+}
+
+#[test]
+fn gh_prefetch_asks_nothing() {
+    // gh lookups are per pair and cheap; nothing is worth loading early.
+    let runner = MockCliRunner::scripted(&[]);
+
+    gh(&runner).prefetch_prs("feature/x").unwrap();
+
+    assert!(runner.calls().is_empty());
+}
+
+#[test]
 fn the_ado_extension_is_verified_once_before_the_first_az_call() {
     // Without the extension, az answers a repos command with an interactive
     // install prompt, hidden behind the captured output — gflow would hang.
