@@ -283,7 +283,9 @@ impl Git for MockGit {
 
     fn list_tags(&self) -> Result<Vec<String>, String> {
         self.record("list_tags".to_string())?;
-        Ok(self.tags.clone())
+        let mut existing: Vec<String> = self.existing_tags.iter().filter(|tag| !self.tags.contains(tag)).cloned().collect();
+        existing.sort();
+        Ok(self.tags.iter().cloned().chain(existing).collect())
     }
 
     fn list_branches_matching(&self, pattern: &str) -> Result<Vec<String>, String> {

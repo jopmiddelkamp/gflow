@@ -1,6 +1,7 @@
 mod common;
 
 use common::{MockEditor, MockGit, MockHosting, MockPrompter, MockVersionScript};
+use gflow::git::BranchDivergence;
 use gflow::flows::start::{start_work_branch, start_release, start_release_fix, start_hotfix_fix, ReleaseType, detect_breaking_changes};
 use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
 use gflow::version::SemVer;
@@ -112,6 +113,46 @@ fn every_start_cuts_from_origin_when_the_local_parent_is_stale() {
 }
 
 #[test]
+fn the_open_release_scan_asks_git_once_however_many_branches_exist() {
+    for (case, cfg, query) in [
+        ("rc: a clean tag is the shipped record", RepoConfig::default(), "list_tags"),
+        ("patch: ancestry of main is the shipped record", patch_cfg(), "remote_branch_divergence:origin/main"),
+    ] {
+        let mut git = MockGit::new();
+        git.branches_matching = (0..5).map(|minor| format!("release/1.{minor}.0")).collect();
+        git.existing_remote_branches.extend(git.branches_matching.clone());
+        git.remote_divergence = Some(git.branches_matching.iter()
+            .map(|branch| BranchDivergence { branch: branch.clone(), ahead: 1, behind: 0 })
+            .collect());
+
+        start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &cfg, None, "main", None).unwrap();
+
+        assert_eq!(git.calls(), vec!["list_branches_matching:release/*", query, "checkout:release/1.4.0"], "{case}");
+    }
+}
+
+#[test]
+fn the_one_query_scan_skips_releases_already_in_main() {
+    let mut git = MockGit::new();
+    git.branches_matching = vec!["release/1.0.0".into(), "release/1.1.0".into(), "release/1.2.0".into()];
+    git.remote_divergence = Some(vec![
+        BranchDivergence { branch: "release/1.1.0".into(), ahead: 2, behind: 9 },
+        BranchDivergence { branch: "release/1.2.0".into(), ahead: 0, behind: 3 },
+    ]);
+    git.ancestors.insert(("release/1.0.0".into(), "origin/main".into()));
+
+    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &patch_cfg(), None, "main", None).unwrap();
+
+    assert_eq!(git.calls(), vec![
+        "list_branches_matching:release/*",
+        "remote_branch_divergence:origin/main",
+        "remote_branch_exists:release/1.0.0",
+        "is_ancestor:release/1.0.0:origin/main",
+        "checkout:release/1.1.0",
+    ]);
+}
+
+#[test]
 fn start_release_creates_new_when_no_release_exists_with_tags() {
     let mut git = MockGit::new();
     git.branches_matching = vec![]; // no existing release branches
@@ -171,6 +212,7 @@ fn start_release_patch_mode_reuses_branch_despite_its_clean_tag() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
+        "remote_branch_divergence:origin/main",
         "remote_branch_exists:release/1.1.0",
         "is_ancestor:release/1.1.0:origin/main",
         "checkout:release/1.1.0",
@@ -240,11 +282,11 @@ fn start_hotfix_fix_patch_mode_reuses_a_fresh_hotfix_branch() {
     start_hotfix_fix(&git, &MockHosting::new(), &patch_cfg(), "urgent-crash", false, None, "main", None).unwrap();
 
     let calls = git.calls();
-    assert!(calls.iter().any(|c| c == "tag_exists:v1.0.1"),
+    assert!(calls.iter().any(|c| c == "list_tags"),
         "hotfix shipped-detection is the clean tag in both strategies; calls: {calls:?}");
     assert!(calls.iter().any(|c| c == "checkout:hotfix/1.0.1"),
         "the untagged hotfix is still open and must be reused; calls: {calls:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("is_ancestor:hotfix")),
+    assert!(!calls.iter().any(|c| c.starts_with("is_ancestor:hotfix") || c.starts_with("remote_branch_divergence:")),
         "ancestry must not decide hotfix shipped-ness; calls: {calls:?}");
 }
 
@@ -319,9 +361,7 @@ fn start_release_skips_shipped_release_branch() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "checkout:release/1.2.0",
     ]);
 }
@@ -338,7 +378,7 @@ fn start_release_creates_new_when_all_releases_shipped() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
+        "list_tags",
         "list_tags",
         "checkout:develop",
         "remote_branch_exists:develop",
@@ -360,6 +400,7 @@ fn start_release_reuse_keeps_unparseable_branch_open() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
+        "list_tags",
         "checkout:release/wip",
     ]);
 }
@@ -405,9 +446,7 @@ fn start_hotfix_fix_skips_shipped_hotfix_branch() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:v1.0.2",
-        "tag_exists:1.0.2",
+        "list_tags",
         "checkout:hotfix/1.0.2",
         "remote_branch_exists:hotfix/1.0.2",
         "create_branch:hotfix-fix/1.0.2/urgent-crash:hotfix/1.0.2",
@@ -429,8 +468,7 @@ fn start_hotfix_fix_skips_a_hotfix_shipped_under_a_plain_tag() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:1.0.1",
+        "list_tags",
         "list_tags",
         "remote_branch_exists:main",
         "checkout:main",
@@ -510,8 +548,7 @@ fn start_release_fix_no_checkout_discovers_release_branch() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "remote_branch_exists:release/1.2.0",
         "create_branch_no_checkout:release-fix/1.2.0/broken-login:release/1.2.0",
         "push:release-fix/1.2.0/broken-login",
@@ -533,9 +570,7 @@ fn start_release_fix_no_checkout_skips_shipped_release_branch() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "remote_branch_exists:release/1.2.0",
         "create_branch_no_checkout:release-fix/1.2.0/broken-login:release/1.2.0",
         "push:release-fix/1.2.0/broken-login",
@@ -562,8 +597,7 @@ fn start_hotfix_fix_no_checkout_existing_hotfix() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:1.0.1",
+        "list_tags",
         "remote_branch_exists:hotfix/1.0.1",
         "create_branch_no_checkout:hotfix-fix/1.0.1/urgent-crash:hotfix/1.0.1",
         "push:hotfix-fix/1.0.1/urgent-crash",
@@ -649,8 +683,7 @@ fn start_release_fix_worktree_active_discovers_and_opens() {
     assert_eq!(git.calls(), vec![
         "current_branch".to_string(),
         "list_branches_matching:release/*".to_string(),
-        "tag_exists:v1.2.0".to_string(),
-        "tag_exists:1.2.0".to_string(),
+        "list_tags".to_string(),
         "remote_branch_exists:release/1.2.0".to_string(),
         "create_branch_no_checkout:release-fix/1.2.0/broken-login:release/1.2.0".to_string(),
         "push:release-fix/1.2.0/broken-login".to_string(),
@@ -723,8 +756,7 @@ fn start_release_reuse_path_never_runs_script() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
-        "tag_exists:1.1.0",
+        "list_tags",
         "checkout:release/1.1.0",
     ]);
     assert!(script.calls().is_empty());
@@ -1143,8 +1175,7 @@ fn start_hotfix_fix_reuse_path_never_runs_script() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:1.0.1",
+        "list_tags",
         "checkout:hotfix/1.0.1",
         "remote_branch_exists:hotfix/1.0.1",
         "create_branch:hotfix-fix/1.0.1/urgent-crash:hotfix/1.0.1",
@@ -1522,8 +1553,7 @@ fn start_release_fix_discovery_bases_a_remote_only_release_branch_on_origin() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "remote_branch_exists:release/1.2.0",
         "local_branch_exists:release/1.2.0",
         "create_branch_no_checkout:release-fix/1.2.0/broken-login:origin/release/1.2.0",
@@ -1561,8 +1591,7 @@ fn start_hotfix_fix_no_checkout_bases_a_remote_only_hotfix_branch_on_origin() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:hotfix/*",
-        "tag_exists:v1.0.1",
-        "tag_exists:1.0.1",
+        "list_tags",
         "remote_branch_exists:hotfix/1.0.1",
         "local_branch_exists:hotfix/1.0.1",
         "create_branch_no_checkout:hotfix-fix/1.0.1/urgent-crash:origin/hotfix/1.0.1",
@@ -1583,10 +1612,7 @@ fn start_release_fix_discovery_picks_the_newest_open_release() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.0.0",
-        "tag_exists:1.0.0",
-        "tag_exists:v1.3.0",
-        "tag_exists:1.3.0",
+        "list_tags",
         "remote_branch_exists:release/1.3.0",
         "create_branch_no_checkout:release-fix/1.3.0/broken-login:release/1.3.0",
         "push:release-fix/1.3.0/broken-login",
@@ -1606,8 +1632,7 @@ fn start_release_fix_discovery_ranks_an_unversioned_release_last() {
     assert_eq!(git.calls(), vec![
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.2.0",
-        "tag_exists:1.2.0",
+        "list_tags",
         "remote_branch_exists:release/1.2.0",
         "create_branch_no_checkout:release-fix/1.2.0/broken-login:release/1.2.0",
         "push:release-fix/1.2.0/broken-login",
@@ -1625,10 +1650,7 @@ fn start_release_reuses_the_newest_open_release_branch() {
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
-        "tag_exists:v1.0.0",
-        "tag_exists:1.0.0",
-        "tag_exists:v1.3.0",
-        "tag_exists:1.3.0",
+        "list_tags",
         "checkout:release/1.3.0",
     ]);
 }
@@ -1758,7 +1780,7 @@ fn release_reuse_and_fix_discovery_stop_when_repository_reads_fail() {
     for call in [
         "current_branch",
         "list_branches_matching:release/*",
-        "tag_exists:v1.1.0",
+        "list_tags",
         "remote_branch_exists:release/1.1.0",
     ] {
         let mut git = MockGit::new();
