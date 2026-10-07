@@ -464,14 +464,14 @@ mod tests {
             ("develop", Action::StartWorkBranch {
                 prefix: "feature".into(), name: "login".into(), from: "develop".into(),
                 no_checkout: false, no_worktree: false,
-            }, "create_branch:feature/login:develop"),
+            }, "create_branch:feature/login:origin/develop"),
             ("develop", Action::StartWorkBranch {
                 prefix: "docs".into(), name: "guide".into(), from: "main".into(),
                 no_checkout: true, no_worktree: false,
             }, "create_branch_no_checkout:docs/guide:main"),
             ("develop", Action::StartRelease {
                 release_type: Some(ReleaseType::Minor), no_worktree: false,
-            }, "create_branch:release/2.5.0:develop"),
+            }, "create_branch:release/2.5.0:origin/develop"),
             ("release/2.5.0", Action::StartReleaseFix {
                 name: "login".into(), no_checkout: false, no_worktree: false,
             }, "create_branch:release-fix/2.5.0/login:release/2.5.0"),

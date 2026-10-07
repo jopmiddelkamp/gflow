@@ -175,7 +175,7 @@ No tag-shape staging/production split exists under `patch`: CI must gate product
 
 ### When to use `--base`
 
-All work branch types (feature/fix/chore/docs/refactor) default to branching from `develop`. Use `--base <branch>` only when the work depends on changes that are not yet in `develop`:
+All work branch types (feature/fix/chore/docs/refactor) default to branching from `develop`. Every start cuts from the latest `origin/<base>`; the local base wins only when it has unpushed commits. Use `--base <branch>` only when the work depends on changes that are not yet in `develop`:
 
 - **Stacking on another work branch** — e.g. `feature/login` depends on `feature/auth` which hasn't been merged yet
 - **Branching from a release branch** — e.g. work that should target a specific release
