@@ -45,7 +45,8 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     // the config files before anything reads config, in the scope they were set
     // in. Idempotent: the git keys are unset once accounted for.
     let home = repo_config::home_dir();
-    let migration_root = git.worktree_root().ok();
+    let root = git.worktree_root();
+    let migration_root = root.as_ref().ok().cloned();
     repo_config::migrate_git_config(&git, home.as_deref(), migration_root.as_deref())?;
 
     // `gflow worktree` only reads/writes config files — no gh, auth, fetch, or
@@ -70,7 +71,7 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     // Eager resolve: a platform-mismatched committed script errors on every
     // command, not just release/hotfix ones. Accepted — it surfaces the
     // misconfiguration immediately rather than on whichever command hits it first.
-    let root = git.worktree_root()?;
+    let root = root?;
     if let Some(Commands::Init) = command {
         return init::run(&MenuPrompter, &root);
     }

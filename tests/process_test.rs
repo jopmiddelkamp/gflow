@@ -79,7 +79,7 @@ case "$*" in
         if [ -n "$GFLOW_PROVIDER" ]; then printf '%s\n' "$GFLOW_PROVIDER"; else exit 1; fi
         ;;
     'remote get-url origin') printf '%s\n' "${GFLOW_REMOTE:-https://github.com/example/fixture.git}" ;;
-    'config --global --get '*|'config --local --get '*) exit 1 ;;
+    'config --global --get-regexp '*|'config --local --get-regexp '*) exit 1 ;;
     *) printf 'unexpected git call: %s\n' "$*" >&2; exit 97 ;;
 esac
 "#,
@@ -156,6 +156,18 @@ fn init_on_an_initialized_repository_does_not_contact_hosting() {
     assert!(stderr(&output).contains("Already initialised"));
     let calls = fs::read_to_string(fixture.root.join("git-calls")).unwrap();
     assert!(!calls.contains("remote get-url"));
+}
+
+#[test]
+fn startup_reads_the_worktree_root_once() {
+    // Every git spawn before the menu is felt; the root never changes in between.
+    let fixture = ProcessFixture::new();
+    fixture.git();
+    fixture.initialized();
+    let output = fixture.run_gflow(&["finish", "--abort"]);
+    assert_success(&output);
+    let calls = fs::read_to_string(fixture.root.join("git-calls")).unwrap();
+    assert_eq!(calls.lines().filter(|line| *line == "rev-parse --show-toplevel").count(), 1, "calls:\n{calls}");
 }
 
 #[test]
@@ -281,6 +293,8 @@ printf '  diagnostic\n' >&2"#,
     );
     fixture.executable("failed-tool", "printf '  rejected  \\n' >&2\nexit 23");
     fixture.executable("signaled-tool", "kill -TERM $$");
+    fixture.executable("group-tool", "printf '%s %s\\n' $$ \"$(/bin/ps -o pgid= -p $$ | /usr/bin/tr -d ' ')\" > \"$GFLOW_CAPTURE\"");
+    fixture.executable("env-tool", "printf '%s\\n' \"$1\" \"$GFLOW_SPAWN_ENV\" > \"$GFLOW_CAPTURE\"\nprintf 'noise\\n'\nprintf 'noise\\n' >&2\nexit 23");
     fs::write(fixture.root.join("bin/not-executable"), "unusable").unwrap();
     let output = fixture
         .command(std::env::current_exe().unwrap())
@@ -407,6 +421,33 @@ fn providers_use_the_repository_native_template_when_requested() {
     assert_success(&output);
 }
 
+/// The isolated child makes the OS reap tools before wait can collect their status.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reap_children_automatically() {
+    unsafe extern "C" {
+        fn signal(signal: std::ffi::c_int, handler: usize) -> usize;
+    }
+    #[cfg(target_os = "macos")]
+    const SIGCHLD: std::ffi::c_int = 20;
+    #[cfg(target_os = "linux")]
+    const SIGCHLD: std::ffi::c_int = 17;
+    assert_ne!(unsafe { signal(SIGCHLD, 1) }, usize::MAX);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn a_background_process_whose_status_was_lost_is_an_error() {
+    let fixture = ProcessFixture::new();
+    fixture.executable("successful-tool", "exit 0");
+    let output = fixture
+        .command(std::env::current_exe().unwrap())
+        .args(["--exact", "process_adapter_child", "--ignored", "--nocapture"])
+        .env("GFLOW_CHILD", "reaped-spawn")
+        .output()
+        .unwrap();
+    assert_success(&output);
+}
+
 #[test]
 #[ignore = "runs only inside controlled process tests"]
 fn process_adapter_child() {
@@ -414,19 +455,18 @@ fn process_adapter_child() {
     let capture = PathBuf::from(std::env::var_os("GFLOW_CAPTURE").unwrap());
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if scenario == "reaped-clipboard" {
-        unsafe extern "C" {
-            fn signal(signal: std::ffi::c_int, handler: usize) -> usize;
-        }
-        #[cfg(target_os = "macos")]
-        const SIGCHLD: std::ffi::c_int = 20;
-        #[cfg(target_os = "linux")]
-        const SIGCHLD: std::ffi::c_int = 17;
-        // The isolated child makes the OS reap tools before wait can collect their status.
-        assert_ne!(unsafe { signal(SIGCHLD, 1) }, usize::MAX);
+        reap_children_automatically();
         assert_eq!(
             GitHub::new(&SystemCli).copy_text("copied\n").unwrap_err(),
             "no clipboard tool available"
         );
+        return;
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if scenario == "reaped-spawn" {
+        reap_children_automatically();
+        let running = SystemRunner.spawn("successful-tool", &[], &[]).ok().unwrap();
+        assert!(running.wait().err().unwrap().starts_with("Failed to wait for git:"));
         return;
     }
     if scenario == "closed-pipe" {
@@ -473,6 +513,28 @@ fn process_adapter_child() {
         assert_eq!(SystemRunner.run("signaled-tool", &[]).unwrap().code, None);
         assert!(SystemRunner
             .run("missing-tool", &[])
+            .err()
+            .unwrap()
+            .contains("Failed to run missing-tool"));
+
+        let running = SystemRunner
+            .spawn("env-tool", &["in background"], &[("GFLOW_SPAWN_ENV", "passed")])
+            .ok()
+            .unwrap();
+        let output = running.wait().unwrap();
+        assert_eq!(output.code, Some(23));
+        assert_eq!((output.stdout.as_str(), output.stderr.as_str()), ("", ""),
+            "no pipe back to gflow, so the process outlives gflow's exit unharmed");
+        assert_eq!(fs::read_to_string(&capture).unwrap(), "in background\npassed\n");
+        // Its own process group: Ctrl-C or a closing terminal signals only
+        // gflow's group, so the fetch is never killed midway.
+        let running = SystemRunner.spawn("group-tool", &[], &[]).ok().unwrap();
+        assert_eq!(running.wait().unwrap().code, Some(0));
+        let ids = fs::read_to_string(&capture).unwrap();
+        let (pid, group) = ids.trim().split_once(' ').unwrap();
+        assert_eq!(pid, group, "the spawned process must lead its own process group");
+        assert!(SystemRunner
+            .spawn("missing-tool", &[], &[])
             .err()
             .unwrap()
             .contains("Failed to run missing-tool"));

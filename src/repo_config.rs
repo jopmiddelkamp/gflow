@@ -283,6 +283,7 @@ pub fn set_key(path: &Path, key: &str, value: Option<&str>) -> Result<(), String
 /// they are detection caches gflow writes back itself, not settings a user
 /// chose, so they stay in git config where their per-clone lifetime belongs.
 type MigratedKey = (&'static str, &'static str, fn(&Settings) -> bool);
+const MIGRATED_SECTION: &str = "gflow.worktree";
 const MIGRATED_KEYS: &[MigratedKey] = &[
     ("gflow.worktree.enabled", "worktree", |s| s.worktree.is_some()),
     ("gflow.worktree.editor", "editor", |s| s.editor.is_some()),
@@ -320,8 +321,9 @@ fn migrate_scope(
     let mut added = String::new();
     let mut migrated_keys = Vec::new();
 
+    let values = git.config_section_at(MIGRATED_SECTION, global)?;
     for (git_key, file_key, already_stated) in MIGRATED_KEYS {
-        let Some(value) = git.get_config_at(git_key, global)? else {
+        let Some((_, value)) = values.iter().find(|(key, _)| key == git_key) else {
             continue;
         };
         // The file already states this key: the file wins, the stale git key

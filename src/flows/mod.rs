@@ -75,13 +75,13 @@ pub(crate) fn tag_if_missing(git: &dyn Git, tag: &str, message: &str) -> Result<
     git.create_tag(tag, message)
 }
 
-/// Push `tag` unless origin already has it.
+/// Push `tag` unless origin already has it. The push answers that itself, so
+/// origin is asked once — each round trip can cost seconds.
 pub(crate) fn push_tag_if_missing(git: &dyn Git, tag: &str) -> Result<(), String> {
-    if git.remote_tag_exists(tag)? {
+    if !git.push_tag(tag)? {
         println!("↷ skipped: push tag {tag} (already pushed)");
-        return Ok(());
     }
-    git.push_tag(tag)
+    Ok(())
 }
 
 // --- PR completion-type policy ----------------------------------------------
@@ -361,10 +361,8 @@ pub(crate) fn landing_pr_body(template: Option<&Path>) -> PrBody<'_> {
 /// pattern so a leg whose target vanished mid-finish leaves no orphan.
 pub(crate) fn cleanup_finish_branches(git: &dyn Git, source: &str) -> Result<(), String> {
     let pattern = format!("finish/{}-into-*", source.replace('/', "-"));
-    for branch in git.list_branches_matching(&pattern)? {
-        delete_branch_guarded(git, &branch)?;
-    }
-    Ok(())
+    let branches = git.list_branches_matching(&pattern)?;
+    delete_branches_guarded(git, &branches.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 /// Whether `source` has landed into `target` at least once: its most recent
@@ -512,16 +510,22 @@ pub fn tag_at_if_missing(git: &dyn Git, tag: &str, message: &str, sha: &str) -> 
 
 /// Delete `branch` locally and remotely, each guarded by an existence check so
 /// re-running after a partial cleanup is a no-op.
-pub(crate) fn delete_branch_guarded(git: &dyn Git, branch: &str) -> Result<(), String> {
-    if git.local_branch_exists(branch)? {
-        git.delete_branch_local(branch)?;
-    } else {
-        println!("↷ skipped: delete local {branch} (already gone)");
+pub(crate) fn delete_branches_guarded(git: &dyn Git, branches: &[&str]) -> Result<(), String> {
+    let mut on_origin = Vec::new();
+    for &branch in branches {
+        if git.local_branch_exists(branch)? {
+            git.delete_branch_local(branch)?;
+        } else {
+            println!("↷ skipped: delete local {branch} (already gone)");
+        }
+        if git.remote_branch_exists(branch)? {
+            on_origin.push(branch);
+        } else {
+            println!("↷ skipped: delete remote {branch} (already gone)");
+        }
     }
-    if git.remote_branch_exists(branch)? {
-        git.delete_branch_remote(branch)?;
-    } else {
-        println!("↷ skipped: delete remote {branch} (already gone)");
+    if !on_origin.is_empty() {
+        git.delete_remote_branches(&on_origin)?;
     }
     Ok(())
 }
@@ -537,19 +541,19 @@ pub(crate) fn delete_branch_guarded(git: &dyn Git, branch: &str) -> Result<(), S
 /// branch held by another worktree. Returns the removed worktree path, if any.
 pub(crate) fn delete_source_branch(git: &dyn Git, branch: &str, main_branch: &str) -> Result<Option<PathBuf>, String> {
     if git.current_branch()? != branch {
-        delete_branch_guarded(git, branch)?;
+        delete_branches_guarded(git, &[branch])?;
         return Ok(None);
     }
     if git.is_linked_worktree()? {
         git.detach_head()?;
-        delete_branch_guarded(git, branch)?;
+        delete_branches_guarded(git, &[branch])?;
         return git.remove_current_worktree().map(Some);
     }
     match git.worktree_of(main_branch)? {
         None => git.checkout(main_branch)?,
         Some(_) => git.detach_head()?,
     }
-    delete_branch_guarded(git, branch)?;
+    delete_branches_guarded(git, &[branch])?;
     Ok(None)
 }
 
@@ -737,6 +741,20 @@ mod tests {
     }
 
     #[test]
+    fn a_tag_push_is_its_own_guard_so_origin_is_asked_only_once() {
+        for already_pushed in [false, true] {
+            let mut git = MockGit::new();
+            if already_pushed {
+                git.existing_remote_tags.insert("v1.0.0".into());
+            }
+
+            push_tag_if_missing(&git, "v1.0.0").unwrap();
+
+            assert_eq!(git.calls(), vec!["push_tag:v1.0.0"]);
+        }
+    }
+
+    #[test]
     fn idempotent_push_and_tag_guards_propagate_failed_reads() {
         assert_each_git_failure(&["is_pushed:source", "push:source"], MockGit::new, |git| {
             push_if_needed(git, "source")
@@ -746,11 +764,7 @@ mod tests {
             MockGit::new,
             |git| tag_if_missing(git, "v1.0.0", "release"),
         );
-        assert_each_git_failure(
-            &["remote_tag_exists:v1.0.0", "push_tag:v1.0.0"],
-            MockGit::new,
-            |git| push_tag_if_missing(git, "v1.0.0"),
-        );
+        assert_each_git_failure(&["push_tag:v1.0.0"], MockGit::new, |git| push_tag_if_missing(git, "v1.0.0"));
         assert_each_git_failure(
             &["tag_exists:v1.0.0", "create_tag_at:v1.0.0:release:merged"],
             MockGit::new,
@@ -1022,7 +1036,9 @@ mod tests {
                 "local_branch_exists:finish/source-into-main",
                 "delete_branch_local:finish/source-into-main",
                 "remote_branch_exists:finish/source-into-main",
-                "delete_branch_remote:finish/source-into-main",
+                "local_branch_exists:finish/source-into-develop",
+                "remote_branch_exists:finish/source-into-develop",
+                "delete_remote_branches:finish/source-into-main",
             ],
             || {
                 let mut git = MockGit::new();
@@ -1052,7 +1068,7 @@ mod tests {
                     "local_branch_exists:source",
                     "delete_branch_local:source",
                     "remote_branch_exists:source",
-                    "delete_branch_remote:source",
+                    "delete_remote_branches:source",
                 ],
             ),
             (
@@ -1066,7 +1082,7 @@ mod tests {
                     "local_branch_exists:source",
                     "delete_branch_local:source",
                     "remote_branch_exists:source",
-                    "delete_branch_remote:source",
+                    "delete_remote_branches:source",
                     "remove_current_worktree",
                 ],
             ),
@@ -1082,7 +1098,7 @@ mod tests {
                     "local_branch_exists:source",
                     "delete_branch_local:source",
                     "remote_branch_exists:source",
-                    "delete_branch_remote:source",
+                    "delete_remote_branches:source",
                 ],
             ),
             (
@@ -1097,7 +1113,7 @@ mod tests {
                     "local_branch_exists:source",
                     "delete_branch_local:source",
                     "remote_branch_exists:source",
-                    "delete_branch_remote:source",
+                    "delete_remote_branches:source",
                 ],
             ),
         ] {
@@ -1224,11 +1240,16 @@ mod tests {
     }
 
     #[test]
-    fn finish_branch_cleanup_removes_all_discovered_finish_branches() {
+    fn finish_branch_cleanup_removes_all_discovered_finish_branches_in_one_push() {
         let mut git = MockGit::new();
-        git.branches_matching = vec!["finish/source-into-main".into(), "finish/source-into-develop".into()];
+        git.branches_matching = vec![
+            "finish/source-into-main".into(),
+            "finish/source-into-develop".into(),
+            "finish/source-into-release-1.2.0".into(),
+        ];
         git.existing_local_branches.insert("finish/source-into-main".into());
         git.existing_remote_branches.insert("finish/source-into-develop".into());
+        git.existing_remote_branches.insert("finish/source-into-release-1.2.0".into());
         cleanup_finish_branches(&git, "source").unwrap();
         assert_eq!(git.calls(), [
             "list_branches_matching:finish/source-into-*",
@@ -1237,8 +1258,19 @@ mod tests {
             "remote_branch_exists:finish/source-into-main",
             "local_branch_exists:finish/source-into-develop",
             "remote_branch_exists:finish/source-into-develop",
-            "delete_branch_remote:finish/source-into-develop",
+            "local_branch_exists:finish/source-into-release-1.2.0",
+            "remote_branch_exists:finish/source-into-release-1.2.0",
+            "delete_remote_branches:finish/source-into-develop finish/source-into-release-1.2.0",
         ]);
+    }
+
+    #[test]
+    fn finish_branch_cleanup_skips_the_push_when_origin_has_none_left() {
+        let mut git = MockGit::new();
+        git.branches_matching = vec!["finish/source-into-main".into()];
+        cleanup_finish_branches(&git, "source").unwrap();
+        let calls = git.calls();
+        assert!(!calls.iter().any(|c| c.starts_with("delete_remote_branches")), "calls: {calls:?}");
     }
 
     #[test]

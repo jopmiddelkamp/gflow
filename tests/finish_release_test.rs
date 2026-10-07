@@ -523,7 +523,6 @@ fn finish_release_creates_clean_tag_from_rc() {
         "create_tag:v1.1.0:chore: release 1.1.0",
         "is_pushed:main",
         "push:main",
-        "remote_tag_exists:v1.1.0",
         "push_tag:v1.1.0",
         "is_ancestor:release/1.1.0:develop",
         "worktree_of:develop",
@@ -536,7 +535,7 @@ fn finish_release_creates_clean_tag_from_rc() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
     assert!(hosting.calls().is_empty(), "free mode must make zero hosting calls; calls: {:?}", hosting.calls());
 }
@@ -561,7 +560,6 @@ fn finish_release_targets_master_when_that_is_the_mainline() {
         "create_tag:v1.1.0:chore: release 1.1.0",
         "is_pushed:master",
         "push:master",
-        "remote_tag_exists:v1.1.0",
         "push_tag:v1.1.0",
         "is_ancestor:release/1.1.0:develop",
         "worktree_of:develop",
@@ -574,7 +572,7 @@ fn finish_release_targets_master_when_that_is_the_mainline() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
 }
 
@@ -597,7 +595,6 @@ fn finish_release_patch_mode_merges_without_tagging() {
         "merge:release/1.1.0:chore: merge release 1.1.0 into main",
         "is_pushed:main",
         "push:main",
-        "remote_tag_exists:v1.1.1",
         "push_tag:v1.1.1",
         "is_ancestor:release/1.1.0:develop",
         "worktree_of:develop",
@@ -610,7 +607,7 @@ fn finish_release_patch_mode_merges_without_tagging() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
     assert!(hosting.calls().is_empty());
 }
@@ -692,7 +689,6 @@ fn protected_patch_finish_completes_after_both_legs_without_tagging() {
         "is_ancestor:mc1:origin/main",
         "commit_parent_count:mc1",
         "tags_on_branch:release/1.1.0",
-        "remote_tag_exists:v1.1.1",
         "push_tag:v1.1.1",
         "branch_sha:release/1.1.0",
         "is_ancestor:mc2:origin/develop",
@@ -707,7 +703,7 @@ fn protected_patch_finish_completes_after_both_legs_without_tagging() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
     let calls = git.calls();
     // The final tag was cut at bump — finish never creates one, but it does
@@ -780,7 +776,8 @@ fn finish_release_resume_after_main_already_merged_and_tagged() {
     assert!(!calls.iter().any(|c| c == "checkout:main"), "must not re-checkout main; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("create_tag:")), "must not re-create tag");
     assert!(!calls.iter().any(|c| c == "push:main"), "must not re-push main");
-    assert!(!calls.iter().any(|c| c == "push_tag:v1.1.0"), "must not re-push tag");
+    assert_eq!(calls.iter().filter(|c| *c == "push_tag:v1.1.0").count(), 1,
+        "the tag push is its own already-pushed guard; calls: {calls:?}");
     // Develop merge still runs
     assert!(calls.iter().any(|c| c == "merge:release/1.1.0:chore: merge release 1.1.0 into develop"), "must merge into develop; calls: {calls:?}");
     // Cleanup runs
@@ -821,7 +818,7 @@ fn finish_release_fully_idempotent_no_op_on_second_run() {
     assert!(!calls.iter().any(|c| c.starts_with("merge:")), "no merges; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("create_tag:")));
     assert!(!calls.iter().any(|c| c.starts_with("push:")));
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")));
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")));
 }
 
 #[test]
@@ -847,7 +844,7 @@ fn finish_release_keeps_branch_when_configured() {
     finish_release(&git, &hosting, &cfg, 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")), "keep must skip deletion; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")), "keep must skip deletion; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c == "checkout:main"), "keep must skip delete_source_branch's checkout; calls: {calls:?}");
 }
 
@@ -934,7 +931,6 @@ fn protected_finish_tags_merge_commit_then_opens_develop_pr() {
         "tag_exists:v1.1.0",
         "tag_exists:v1.1.0",
         "create_tag_at:v1.1.0:chore: release 1.1.0:mc1",
-        "remote_tag_exists:v1.1.0",
         "push_tag:v1.1.0",
         "branch_sha:release/1.1.0",
         "rev_list_count:old-head:release/1.1.0",
@@ -1044,7 +1040,7 @@ fn protected_finish_completes_after_develop_merge() {
         "tag_exists:v1.1.0",
         "tag_commit_sha:v1.1.0",
         "is_ancestor:mc1:origin/main",
-        "remote_tag_exists:v1.1.0",
+        "push_tag:v1.1.0",
         "branch_sha:release/1.1.0",
         "is_ancestor:mc2:origin/develop",
         "commit_parent_count:mc2",
@@ -1058,7 +1054,7 @@ fn protected_finish_completes_after_develop_merge() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
 }
 
@@ -1164,7 +1160,7 @@ fn protected_finish_keeps_branch_when_configured() {
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "checkout:main"), "keep must skip delete_source_branch's checkout; calls: {calls:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")), "keep must skip deletion; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")), "keep must skip deletion; calls: {calls:?}");
 }
 
 #[test]
@@ -1195,7 +1191,7 @@ fn protected_finish_reports_commits_that_will_miss_the_release() {
         "commits past the main landing must be counted so they can be reported; calls: {calls:?}"
     );
     // Reporting only — the release still completes and the branch is cleaned up.
-    assert!(calls.contains(&"delete_branch_remote:release/1.1.0".to_string()), "calls: {calls:?}");
+    assert!(calls.contains(&"delete_remote_branches:release/1.1.0".to_string()), "calls: {calls:?}");
 }
 
 #[test]
@@ -1247,7 +1243,6 @@ fn protected_finish_cleans_up_when_the_branch_moved_after_the_tag_landed() {
         "tag_exists:v1.1.0",
         "tag_commit_sha:v1.1.0",
         "is_ancestor:old-tip-sha:origin/main",
-        "remote_tag_exists:v1.1.0",
         "push_tag:v1.1.0",
         "is_ancestor:mc2:origin/develop",
         "commit_parent_count:mc2",
@@ -1258,7 +1253,7 @@ fn protected_finish_cleans_up_when_the_branch_moved_after_the_tag_landed() {
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
-        "delete_branch_remote:release/1.1.0",
+        "delete_remote_branches:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
@@ -1299,7 +1294,7 @@ fn protected_finish_keeps_the_branch_when_its_tip_landed_nowhere() {
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c.starts_with("delete_branch_local")), "unlanded commits must not be deleted; calls: {calls:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_remote")), "unlanded commits must not be deleted; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_remote_branches")), "unlanded commits must not be deleted; calls: {calls:?}");
     let hosting_calls = hosting.calls();
     assert_eq!(hosting_calls[hosting_calls.len() - 3..], [
         "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
@@ -1792,7 +1787,7 @@ fn release_cleanup_with_unlanded_tip_keeps_the_branch() {
 
     finish_release_cleanup(&git, &protected_cfg(false), "release/1.1.0", "main", &SemVer::new(1, 1, 0), false).unwrap();
 
-    assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")),
+    assert!(!git.calls().iter().any(|c| c.starts_with("delete_")),
         "an unlanded tip must never be deleted; calls: {:?}", git.calls());
 }
 
@@ -1855,7 +1850,7 @@ fn refreshing_a_finish_branch_conflict_preserves_the_source_and_stops_publicatio
         .calls()
         .iter()
         .any(|call| call.starts_with("delete_branch_local:")
-            || call.starts_with("delete_branch_remote:")
+            || call.starts_with("delete_remote_branches:")
             || call.starts_with("push:finish/")));
 }
 
@@ -2202,7 +2197,7 @@ fn free_release_stops_after_each_failed_finish_step() {
             "tags_on_branch:release/1.1.0",
             "is_ancestor:release/1.1.0:main",
             "is_pushed:main",
-            "remote_tag_exists:v1.1.0",
+            "push_tag:v1.1.0",
             "is_pushed:develop",
             "is_linked_worktree",
         ];
@@ -2269,7 +2264,7 @@ fn protected_release_does_not_publish_when_staging_checks_fail() {
                 .calls()
                 .iter()
                 .any(|c| c.starts_with("create_or_get_pr:")));
-            assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+            assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
         }
     }
 }
@@ -2302,7 +2297,7 @@ fn protected_release_stops_after_failed_main_pr_creation() {
         assert!(!git
             .calls()
             .iter()
-            .any(|c| c.starts_with("create_tag") || c.starts_with("delete_branch")));
+            .any(|c| c.starts_with("create_tag") || c.starts_with("delete_")));
     }
 }
 
@@ -2310,7 +2305,7 @@ fn protected_release_stops_after_failed_main_pr_creation() {
 fn protected_release_stops_after_failed_landed_finish_step() {
     for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
         let mut failures = vec![
-            ("remote_tag_exists:v1.1.0", 1),
+            ("push_tag:v1.1.0", 1),
             ("branch_sha:release/1.1.0", 1),
             ("branch_sha:release/1.1.0", 2),
             ("branch_sha:release/1.1.0", 3),
@@ -2342,7 +2337,7 @@ fn protected_release_stops_after_failed_landed_finish_step() {
                 &git,
                 call,
             );
-            assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+            assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
         }
     }
 }
@@ -2352,7 +2347,7 @@ fn protected_release_stops_if_existing_tag_cannot_be_verified_or_pushed() {
     for call in [
         "tag_commit_sha:v1.1.0",
         "is_ancestor:merged:origin/main",
-        "remote_tag_exists:v1.1.0",
+        "push_tag:v1.1.0",
     ] {
         let mut git = release_git();
         git.existing_tags.insert("v1.1.0".into());
@@ -2374,6 +2369,6 @@ fn protected_release_stops_if_existing_tag_cannot_be_verified_or_pushed() {
             &git,
             call,
         );
-        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
     }
 }

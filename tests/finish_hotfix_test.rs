@@ -32,7 +32,6 @@ fn finish_hotfix_full_sequence() {
         "create_tag:v1.0.1:chore: hotfix 1.0.1",
         "is_pushed:main",
         "push:main",
-        "remote_tag_exists:v1.0.1",
         "push_tag:v1.0.1",
         "is_ancestor:hotfix/1.0.1:develop",
         "worktree_of:develop",
@@ -46,7 +45,7 @@ fn finish_hotfix_full_sequence() {
         "local_branch_exists:hotfix/1.0.1",
         "delete_branch_local:hotfix/1.0.1",
         "remote_branch_exists:hotfix/1.0.1",
-        "delete_branch_remote:hotfix/1.0.1",
+        "delete_remote_branches:hotfix/1.0.1",
     ]);
     assert!(hosting.calls().is_empty(), "free mode must make zero hosting calls; calls: {:?}", hosting.calls());
 }
@@ -68,7 +67,6 @@ fn finish_hotfix_targets_master_when_that_is_the_mainline() {
         "create_tag:v2.3.4:chore: hotfix 2.3.4",
         "is_pushed:master",
         "push:master",
-        "remote_tag_exists:v2.3.4",
         "push_tag:v2.3.4",
         "is_ancestor:hotfix/2.3.4:develop",
         "worktree_of:develop",
@@ -82,7 +80,7 @@ fn finish_hotfix_targets_master_when_that_is_the_mainline() {
         "local_branch_exists:hotfix/2.3.4",
         "delete_branch_local:hotfix/2.3.4",
         "remote_branch_exists:hotfix/2.3.4",
-        "delete_branch_remote:hotfix/2.3.4",
+        "delete_remote_branches:hotfix/2.3.4",
     ]);
 }
 
@@ -134,7 +132,6 @@ fn finish_hotfix_propagates_to_multiple_release_branches_in_sorted_order() {
         "create_tag:v1.0.1:chore: hotfix 1.0.1",
         "is_pushed:main",
         "push:main",
-        "remote_tag_exists:v1.0.1",
         "push_tag:v1.0.1",
         "is_ancestor:hotfix/1.0.1:develop",
         "worktree_of:develop",
@@ -166,7 +163,7 @@ fn finish_hotfix_propagates_to_multiple_release_branches_in_sorted_order() {
         "local_branch_exists:hotfix/1.0.1",
         "delete_branch_local:hotfix/1.0.1",
         "remote_branch_exists:hotfix/1.0.1",
-        "delete_branch_remote:hotfix/1.0.1",
+        "delete_remote_branches:hotfix/1.0.1",
     ];
     assert_eq!(calls, expected_calls);
 }
@@ -197,7 +194,7 @@ fn finish_hotfix_aborts_on_release_merge_conflict_without_deleting_hotfix() {
         "hotfix branch must survive for retry; calls: {calls:?}"
     );
     assert!(
-        !calls.iter().any(|c| c.starts_with("delete_branch_remote:hotfix/")),
+        !calls.iter().any(|c| c.starts_with("delete_remote_branches:hotfix/")),
         "hotfix branch must survive for retry; calls: {calls:?}"
     );
 }
@@ -229,12 +226,13 @@ fn finish_hotfix_resume_skips_already_merged_main_and_develop() {
     // No re-tag, no re-push
     assert!(!calls.iter().any(|c| c.starts_with("create_tag:")), "must not re-create tag");
     assert!(!calls.iter().any(|c| c == "push:main"), "must not re-push main");
-    assert!(!calls.iter().any(|c| c == "push_tag:v1.0.1"), "must not re-push tag");
+    assert_eq!(calls.iter().filter(|c| *c == "push_tag:v1.0.1").count(), 1,
+        "the tag push is its own already-pushed guard; calls: {calls:?}");
     // Release propagation still runs
     assert!(calls.iter().any(|c| c == "merge:hotfix/1.0.1:chore: merge hotfix 1.0.1 into release/1.2.0"), "must merge into release; calls: {calls:?}");
     // Hotfix cleanup runs
     assert!(calls.iter().any(|c| c == "delete_branch_local:hotfix/1.0.1"));
-    assert!(calls.iter().any(|c| c == "delete_branch_remote:hotfix/1.0.1"));
+    assert!(calls.iter().any(|c| c == "delete_remote_branches:hotfix/1.0.1"));
 }
 
 #[test]
@@ -261,7 +259,7 @@ fn finish_hotfix_resume_skips_already_propagated_release() {
     assert!(!calls.iter().any(|c| c.starts_with("push:")), "no pushes should run; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("create_tag:")), "no tag creation");
     assert!(calls.iter().any(|c| c == "delete_branch_local:hotfix/1.0.1"));
-    assert!(calls.iter().any(|c| c == "delete_branch_remote:hotfix/1.0.1"));
+    assert!(calls.iter().any(|c| c == "delete_remote_branches:hotfix/1.0.1"));
 }
 
 #[test]
@@ -309,7 +307,7 @@ fn finish_hotfix_resume_when_branch_already_deleted_is_idempotent() {
     finish_hotfix(&git, &hosting, &RepoConfig::default(), 1, 0, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")), "deletions should be skipped; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")), "deletions should be skipped; calls: {calls:?}");
 }
 
 #[test]
@@ -334,7 +332,7 @@ fn finish_hotfix_keeps_branch_when_configured() {
     finish_hotfix(&git, &hosting, &cfg, 1, 0, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")), "keep must skip deletion; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")), "keep must skip deletion; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c == "checkout:main"), "keep must skip delete_source_branch's checkout; calls: {calls:?}");
 }
 
@@ -440,7 +438,6 @@ fn protected_hotfix_tags_merge_commit_then_opens_develop_pr() {
         "tag_exists:v1.1.1",
         "tag_exists:v1.1.1",
         "create_tag_at:v1.1.1:chore: hotfix 1.1.1:mc1",
-        "remote_tag_exists:v1.1.1",
         "push_tag:v1.1.1",
         "branch_sha:hotfix/1.1.1",
         "is_ancestor:hotfix/1.1.1:origin/develop",
@@ -499,7 +496,7 @@ fn protected_hotfix_opens_one_release_pr_per_run() {
         "tag_exists:v1.1.1",
         "tag_commit_sha:v1.1.1",
         "is_ancestor:mc1:origin/main",
-        "remote_tag_exists:v1.1.1",
+        "push_tag:v1.1.1",
         "branch_sha:hotfix/1.1.1",
         "is_ancestor:mc2:origin/develop",
         "commit_parent_count:mc2",
@@ -568,7 +565,7 @@ fn protected_hotfix_next_run_opens_pr_for_the_remaining_release() {
         "tag_exists:v1.1.1",
         "tag_commit_sha:v1.1.1",
         "is_ancestor:mc1:origin/main",
-        "remote_tag_exists:v1.1.1",
+        "push_tag:v1.1.1",
         "branch_sha:hotfix/1.1.1",
         "is_ancestor:mc2:origin/develop",
         "commit_parent_count:mc2",
@@ -646,7 +643,7 @@ fn protected_hotfix_completes_after_all_landed() {
         "tag_exists:v1.1.1",
         "tag_commit_sha:v1.1.1",
         "is_ancestor:mc1:origin/main",
-        "remote_tag_exists:v1.1.1",
+        "push_tag:v1.1.1",
         "branch_sha:hotfix/1.1.1",
         "is_ancestor:mc2:origin/develop",
         "commit_parent_count:mc2",
@@ -666,7 +663,7 @@ fn protected_hotfix_completes_after_all_landed() {
         "local_branch_exists:hotfix/1.1.1",
         "delete_branch_local:hotfix/1.1.1",
         "remote_branch_exists:hotfix/1.1.1",
-        "delete_branch_remote:hotfix/1.1.1",
+        "delete_remote_branches:hotfix/1.1.1",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:hotfix/1.1.1:main",
@@ -702,7 +699,7 @@ fn protected_hotfix_keeps_branch_when_configured() {
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "checkout:main"), "keep must skip delete_source_branch's checkout; calls: {calls:?}");
-    assert!(!calls.iter().any(|c| c.starts_with("delete_branch_")), "keep must skip deletion; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("delete_")), "keep must skip deletion; calls: {calls:?}");
 }
 
 #[test]
@@ -745,7 +742,7 @@ fn protected_hotfix_reopens_the_develop_leg_when_the_branch_moved() {
         "must not reopen a main PR once main has landed; calls: {hosting_calls:?}");
     assert!(!hosting_calls.iter().any(|c| c.contains(":release/1.4.0")),
         "the release leg is not reached while develop misses commits; calls: {hosting_calls:?}");
-    assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch_")),
+    assert!(!git.calls().iter().any(|c| c.starts_with("delete_")),
         "unlanded commits must not be deleted; calls: {:?}", git.calls());
 }
 
@@ -837,7 +834,7 @@ fn finish_hotfix_in_its_own_worktree_removes_the_worktree_last() {
         "local_branch_exists:hotfix/1.0.1",
         "delete_branch_local:hotfix/1.0.1",
         "remote_branch_exists:hotfix/1.0.1",
-        "delete_branch_remote:hotfix/1.0.1",
+        "delete_remote_branches:hotfix/1.0.1",
         "remove_current_worktree",
     ]);
 }
@@ -1058,7 +1055,7 @@ fn hotfix_cleanup_with_unlanded_tip_keeps_the_branch() {
 
     finish_hotfix_cleanup(&git, &cfg, "hotfix/1.0.1", "main", &SemVer::new(1, 0, 1), &[], false).unwrap();
 
-    assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")),
+    assert!(!git.calls().iter().any(|c| c.starts_with("delete_")),
         "an unlanded tip must never be deleted; calls: {:?}", git.calls());
 }
 
@@ -1128,7 +1125,7 @@ fn free_hotfix_stops_after_each_failed_finish_step() {
         "is_ancestor:hotfix/1.1.1:main",
         "tag_exists:v1.1.1",
         "is_pushed:main",
-        "remote_tag_exists:v1.1.1",
+        "push_tag:v1.1.1",
         "is_pushed:develop",
         "list_branches_matching:release/*",
         "is_pushed:release/1.2.0",
@@ -1164,7 +1161,7 @@ fn protected_hotfix_stops_after_failed_landed_finish_step() {
         ("is_ancestor:merged:origin/main", 1),
         ("tag_exists:v1.1.1", 1),
         ("create_tag_at:v1.1.1:chore: hotfix 1.1.1:merged", 1),
-        ("remote_tag_exists:v1.1.1", 1),
+        ("push_tag:v1.1.1", 1),
         ("branch_sha:hotfix/1.1.1", 1),
         ("branch_sha:hotfix/1.1.1", 2),
         ("list_branches_matching:release/*", 1),
@@ -1189,7 +1186,7 @@ fn protected_hotfix_stops_after_failed_landed_finish_step() {
             &git,
             call,
         );
-        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
     }
 }
 
@@ -1198,7 +1195,7 @@ fn protected_hotfix_stops_if_existing_tag_cannot_be_verified_or_pushed() {
     for call in [
         "tag_commit_sha:v1.1.1",
         "is_ancestor:merged:origin/main",
-        "remote_tag_exists:v1.1.1",
+        "push_tag:v1.1.1",
     ] {
         let mut git = MockGit::new();
         git.existing_tags.insert("v1.1.1".into());
@@ -1221,7 +1218,7 @@ fn protected_hotfix_stops_if_existing_tag_cannot_be_verified_or_pushed() {
             &git,
             call,
         );
-        assert!(!git.calls().iter().any(|c| c.starts_with("delete_branch")));
+        assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
     }
 }
 
@@ -1263,7 +1260,7 @@ fn protected_hotfix_stops_after_hosting_errors_before_opening_later_legs() {
         let mut hosting = MockHosting::new();
         hosting.fail_call = Some((call.into(), 1));
         assert_hosting_failure(finish_hotfix(&git, &hosting, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1, 1, "main", None, false), &hosting, call);
-        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c.starts_with("delete_branch")));
+        assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c.starts_with("delete_")));
         assert!(!hosting.calls().iter().any(|c| c.contains(":develop")));
     }
 }

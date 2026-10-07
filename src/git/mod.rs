@@ -1,7 +1,8 @@
 pub mod branch;
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -9,14 +10,56 @@ fn utf8_path(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| format!("Path is not valid UTF-8: {}", path.display()))
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct BranchDivergence {
+    pub branch: String,
+    /// Commits only on `branch`.
+    pub ahead: u32,
+    /// Commits only on the branch it was compared with.
+    pub behind: u32,
+}
+
+fn parse_divergence(line: &str) -> Result<BranchDivergence> {
+    let unexpected = || format!("Unexpected ahead-behind data from git: '{line}'");
+    let mut fields = line.rsplitn(3, ' ');
+    let (Some(behind), Some(ahead), Some(branch)) = (fields.next(), fields.next(), fields.next()) else {
+        return Err(unexpected());
+    };
+    Ok(BranchDivergence {
+        branch: branch.to_string(),
+        ahead: ahead.parse().map_err(|_| unexpected())?,
+        behind: behind.parse().map_err(|_| unexpected())?,
+    })
+}
+
+const FETCH: [&str; 4] = ["fetch", "--all", "--prune", "--quiet"];
+
+/// The ssh command git would use (same precedence as git), with prompts
+/// turned off so a background fetch fails instead of asking. `None` when that
+/// cannot be done safely: `GIT_SSH` names a program that may not accept `-o`.
+fn batch_mode_ssh(ssh_command: Option<String>, git_ssh_set: bool, core_ssh_command: &dyn Fn() -> Result<Option<String>>) -> Option<String> {
+    let command = match ssh_command {
+        Some(command) => command,
+        None if git_ssh_set => return None,
+        None => core_ssh_command().ok()?.unwrap_or_else(|| "ssh".to_string()),
+    };
+    Some(format!("{command} -o BatchMode=yes"))
+}
+
 pub trait Git {
     fn current_branch(&self) -> Result<String>;
     fn fetch(&self) -> Result<()>;
+    /// Begin `fetch` without waiting, so it overlaps work such as the menu; the
+    /// next `fetch` waits for it. Best effort: when it cannot start, or fails,
+    /// `fetch` runs again in the foreground, where prompts work.
+    fn start_fetch(&self);
     fn checkout(&self, branch: &str) -> Result<()>;
     fn create_branch(&self, branch: &str, from: &str) -> Result<()>;
     fn create_branch_no_checkout(&self, branch: &str, from: &str) -> Result<()>;
     fn push(&self, branch: &str) -> Result<()>;
-    fn push_tag(&self, tag: &str) -> Result<()>;
+    /// `true` when origin received the tag, `false` when it already had this
+    /// exact tag. A different tag of the same name on origin is an error.
+    fn push_tag(&self, tag: &str) -> Result<bool>;
     fn create_tag(&self, tag: &str, message: &str) -> Result<()>;
     fn merge(&self, branch: &str, message: &str) -> Result<()>;
     fn ff_merge(&self, branch: &str) -> Result<()>;
@@ -26,9 +69,14 @@ pub trait Git {
     fn list_branches_matching(&self, pattern: &str) -> Result<Vec<String>>;
     fn is_working_tree_clean(&self) -> Result<bool>;
     fn delete_branch_local(&self, branch: &str) -> Result<()>;
-    fn delete_branch_remote(&self, branch: &str) -> Result<()>;
+    /// One push for all of them: each round trip to origin can cost seconds.
+    fn delete_remote_branches(&self, branches: &[&str]) -> Result<()>;
     fn tags_on_branch(&self, branch: &str) -> Result<Vec<String>>;
     fn list_remote_branches(&self) -> Result<Vec<String>>;
+    /// How every `origin/*` branch diverges from `from`, in one call. Needs
+    /// git 2.41 (`%(ahead-behind)`); older git fails, and callers count per
+    /// branch with `merge_base` + `rev_list_count` instead.
+    fn remote_branch_divergence(&self, from: &str) -> Result<Vec<BranchDivergence>>;
     fn merge_base(&self, a: &str, b: &str) -> Result<String>;
     fn rev_list_count(&self, from: &str, to: &str) -> Result<u32>;
     /// Number of parents of `sha` (2+ = a merge commit, 1 = a plain commit,
@@ -41,7 +89,6 @@ pub trait Git {
     fn tag_exists(&self, tag: &str) -> Result<bool>;
     fn local_branch_exists(&self, branch: &str) -> Result<bool>;
     fn remote_branch_exists(&self, branch: &str) -> Result<bool>;
-    fn remote_tag_exists(&self, tag: &str) -> Result<bool>;
     fn is_pushed(&self, branch: &str) -> Result<bool>;
     fn is_mid_merge(&self) -> Result<bool>;
     fn has_unmerged_paths(&self) -> Result<bool>;
@@ -54,10 +101,11 @@ pub trait Git {
     // Worktree / config primitives
     /// Read a git config value (`git config --get <key>`). Returns `None` when unset.
     fn get_config(&self, key: &str) -> Result<Option<String>>;
-    /// Read `key` from one scope only. `get_config` returns the *effective*
-    /// value, which cannot tell a local override from a global default — the
-    /// config migration has to know which file a value belongs in.
-    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>>;
+    /// Every `(key, value)` of `section` in one scope only, in one call.
+    /// `get_config` returns the *effective* value, which cannot tell a local
+    /// override from a global default — the config migration has to know which
+    /// file a value belongs in.
+    fn config_section_at(&self, section: &str, global: bool) -> Result<Vec<(String, String)>>;
     /// Write a git config value. `global` selects `--global` (user) vs local (repo) scope.
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<()>;
     /// Remove a git config value. A key that is already unset is treated as success.
@@ -136,12 +184,39 @@ pub struct CliOutput {
 /// outside adapter impls" (SKILL.md principle 1) true at a single point.
 pub trait CommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<CliOutput>;
+    /// Start `program` without waiting for it; only its exit code is kept.
+    /// Nothing connects it to gflow — no stdin to steal a prompt's input, no
+    /// pipe whose closing would break it, no shared process group for Ctrl-C
+    /// to kill — so it can outlive gflow unharmed.
+    fn spawn(&self, program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<Box<dyn RunningCommand + '_>>;
+}
+
+/// A process started by `CommandRunner::spawn`.
+pub trait RunningCommand {
+    fn wait(self: Box<Self>) -> Result<CliOutput>;
 }
 
 /// The real runner: spawns `git` as a child process.
 pub struct SystemRunner;
 
 impl CommandRunner for SystemRunner {
+    fn spawn(&self, program: &str, args: &[&str], env: &[(&str, &str)]) -> Result<Box<dyn RunningCommand + '_>> {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .envs(env.iter().copied())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // Its own process group: Ctrl-C and a closing terminal signal gflow's
+        // group only, so the process is never killed midway.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command
+            .spawn()
+            .map_err(|e| format!("Failed to run {program}: {e}"))?;
+        Ok(Box::new(SystemChild(child)))
+    }
     fn run(&self, program: &str, args: &[&str]) -> Result<CliOutput> {
         let output = Command::new(program).args(args).output()
             .map_err(|e| format!("Failed to run {program}: {e}"))?;
@@ -153,13 +228,27 @@ impl CommandRunner for SystemRunner {
     }
 }
 
+struct SystemChild(Child);
+
+impl RunningCommand for SystemChild {
+    fn wait(self: Box<Self>) -> Result<CliOutput> {
+        let output = self.0.wait_with_output().map_err(|e| format!("Failed to wait for git: {e}"))?;
+        Ok(CliOutput {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
+}
+
 pub struct GitCli<'a> {
     runner: &'a dyn CommandRunner,
+    background_fetch: RefCell<Option<Box<dyn RunningCommand + 'a>>>,
 }
 
 impl<'a> GitCli<'a> {
     pub fn new(runner: &'a dyn CommandRunner) -> Self {
-        Self { runner }
+        Self { runner, background_fetch: RefCell::new(None) }
     }
 
     fn output(&self, args: &[&str]) -> Result<CliOutput> {
@@ -229,12 +318,34 @@ fn unexpected_exit(args: &[&str], output: &CliOutput) -> String {
 
 impl Git for GitCli<'_> {
     fn current_branch(&self) -> Result<String> { self.run(&["rev-parse", "--abbrev-ref", "HEAD"]) }
-    fn fetch(&self) -> Result<()> { self.run(&["fetch", "--all", "--prune"]).map(|_| ()) }
+    fn fetch(&self) -> Result<()> {
+        if let Some(fetch) = self.background_fetch.borrow_mut().take() {
+            if matches!(fetch.wait(), Ok(CliOutput { code: Some(0), .. })) {
+                return Ok(());
+            }
+        }
+        self.run(&FETCH).map(|_| ())
+    }
+    fn start_fetch(&self) {
+        let ssh = batch_mode_ssh(
+            std::env::var("GIT_SSH_COMMAND").ok(),
+            std::env::var_os("GIT_SSH").is_some(),
+            &|| self.get_config("core.sshCommand"),
+        );
+        let Some(ssh) = ssh else { return };
+        let env = [("GIT_TERMINAL_PROMPT", "0"), ("GIT_SSH_COMMAND", ssh.as_str())];
+        if let Ok(fetch) = self.runner.spawn("git", &FETCH, &env) {
+            *self.background_fetch.borrow_mut() = Some(fetch);
+        }
+    }
     fn checkout(&self, branch: &str) -> Result<()> { self.run(&["checkout", branch]).map(|_| ()) }
     fn create_branch(&self, branch: &str, from: &str) -> Result<()> { self.run(&["checkout", "-b", branch, from]).map(|_| ()) }
     fn create_branch_no_checkout(&self, branch: &str, from: &str) -> Result<()> { self.run(&["branch", branch, from]).map(|_| ()) }
     fn push(&self, branch: &str) -> Result<()> { self.run(&["push", "-u", "origin", branch]).map(|_| ()) }
-    fn push_tag(&self, tag: &str) -> Result<()> { self.run(&["push", "origin", tag]).map(|_| ()) }
+    fn push_tag(&self, tag: &str) -> Result<bool> {
+        let output = self.run(&["push", "--porcelain", "origin", tag])?;
+        Ok(!output.lines().any(|line| line.starts_with("=\t")))
+    }
     fn create_tag(&self, tag: &str, message: &str) -> Result<()> { self.run(&["tag", "-a", tag, "-m", message]).map(|_| ()) }
     fn merge(&self, branch: &str, message: &str) -> Result<()> { self.run(&["merge", branch, "--no-ff", "-m", message]).map(|_| ()) }
     fn ff_merge(&self, branch: &str) -> Result<()> { self.run(&["merge", branch, "--ff-only"]).map(|_| ()) }
@@ -262,7 +373,11 @@ impl Git for GitCli<'_> {
         Ok(output.is_empty())
     }
     fn delete_branch_local(&self, branch: &str) -> Result<()> { self.run(&["branch", "-D", branch]).map(|_| ()) }
-    fn delete_branch_remote(&self, branch: &str) -> Result<()> { self.run(&["push", "origin", "--delete", branch]).map(|_| ()) }
+    fn delete_remote_branches(&self, branches: &[&str]) -> Result<()> {
+        let mut args = vec!["push", "origin", "--delete"];
+        args.extend_from_slice(branches);
+        self.run(&args).map(|_| ())
+    }
     fn tags_on_branch(&self, branch: &str) -> Result<Vec<String>> {
         self.run_lines(&["tag", "--merged", branch])
     }
@@ -273,6 +388,14 @@ impl Git for GitCli<'_> {
             .map(|s| s.trim_start_matches("origin/").to_string())
             .filter(|s| s != "HEAD")
             .collect())
+    }
+    fn remote_branch_divergence(&self, from: &str) -> Result<Vec<BranchDivergence>> {
+        let format = format!("--format=%(refname:lstrip=3) %(ahead-behind:{from})");
+        self.run_lines(&["for-each-ref", &format, "refs/remotes/origin/"])?
+            .iter()
+            .filter(|line| !line.starts_with("HEAD "))
+            .map(|line| parse_divergence(line))
+            .collect()
     }
     fn merge_base(&self, a: &str, b: &str) -> Result<String> {
         self.run(&["merge-base", a, b])
@@ -312,10 +435,6 @@ impl Git for GitCli<'_> {
     }
     fn remote_branch_exists(&self, branch: &str) -> Result<bool> {
         self.run_check(&["show-ref", "--verify", "--quiet", &format!("refs/remotes/origin/{branch}")])
-    }
-    fn remote_tag_exists(&self, tag: &str) -> Result<bool> {
-        let output = self.run(&["ls-remote", "--tags", "origin", tag])?;
-        Ok(!output.trim().is_empty())
     }
     fn is_pushed(&self, branch: &str) -> Result<bool> {
         let local = self.rev_parse(branch)?;
@@ -359,9 +478,19 @@ impl Git for GitCli<'_> {
     fn get_config(&self, key: &str) -> Result<Option<String>> {
         self.run_config(&["config", "--get", key])
     }
-    fn get_config_at(&self, key: &str, global: bool) -> Result<Option<String>> {
+    fn config_section_at(&self, section: &str, global: bool) -> Result<Vec<(String, String)>> {
         let scope = if global { "--global" } else { "--local" };
-        self.run_config(&["config", scope, "--get", key])
+        let pattern = format!("^{}\\.", section.replace('.', "\\."));
+        let Some(output) = self.run_config(&["config", scope, "--get-regexp", &pattern])? else {
+            return Ok(Vec::new());
+        };
+        Ok(output
+            .lines()
+            .map(|line| {
+                let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+                (key.to_string(), value.to_string())
+            })
+            .collect())
     }
     fn set_config(&self, key: &str, value: &str, global: bool) -> Result<()> {
         let mut args = vec!["config"];
@@ -466,5 +595,21 @@ impl Git for GitCli<'_> {
     }
     fn branch_sha(&self, branch: &str) -> Result<String> {
         self.run(&["rev-parse", &format!("refs/heads/{branch}")])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::batch_mode_ssh;
+
+    #[test]
+    fn batch_mode_is_added_to_the_ssh_command_git_would_use() {
+        let config = || Ok(Some("ssh -p 2222".to_string()));
+        assert_eq!(batch_mode_ssh(Some("ssh -v".into()), true, &config), Some("ssh -v -o BatchMode=yes".into()),
+            "GIT_SSH_COMMAND wins over GIT_SSH and core.sshCommand");
+        assert_eq!(batch_mode_ssh(None, true, &config), None, "GIT_SSH names a program that may not accept -o");
+        assert_eq!(batch_mode_ssh(None, false, &config), Some("ssh -p 2222 -o BatchMode=yes".into()));
+        assert_eq!(batch_mode_ssh(None, false, &|| Ok(None)), Some("ssh -o BatchMode=yes".into()));
+        assert_eq!(batch_mode_ssh(None, false, &|| Err("unreadable".into())), None);
     }
 }

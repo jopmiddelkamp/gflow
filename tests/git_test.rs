@@ -3,7 +3,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::MockCommandRunner;
-use gflow::git::{CliOutput, CommandRunner, Git, GitCli};
+use gflow::git::{BranchDivergence, CliOutput, CommandRunner, Git, GitCli, RunningCommand};
 
 // `GitCli` is the git adapter. Two things in it are worth pinning:
 //
@@ -18,6 +18,86 @@ use gflow::git::{CliOutput, CommandRunner, Git, GitCli};
 
 fn git(runner: &MockCommandRunner) -> GitCli<'_> {
     GitCli::new(runner)
+}
+
+// --- Background fetch ---
+
+/// Runs like the mock but cannot start a process in the background.
+struct SpawnFails(MockCommandRunner);
+
+impl CommandRunner for SpawnFails {
+    fn run(&self, program: &str, args: &[&str]) -> Result<CliOutput, String> {
+        self.0.run(program, args)
+    }
+    fn spawn(&self, _: &str, _: &[&str], _: &[(&str, &str)]) -> Result<Box<dyn RunningCommand + '_>, String> {
+        Err("no processes left".into())
+    }
+}
+
+#[test]
+fn a_started_fetch_is_awaited_instead_of_fetching_twice() {
+    let runner = MockCommandRunner::scripted(&[(1, "", ""), (0, "", "")]);
+    let git = git(&runner);
+
+    git.start_fetch();
+    git.fetch().unwrap();
+
+    // BatchMode: ssh fails instead of asking for a passphrase over the menu.
+    assert_eq!(runner.calls(), vec![
+        "git config --get core.sshCommand",
+        "spawn GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -o BatchMode=yes: git fetch --all --prune --quiet",
+        "wait: git fetch --all --prune --quiet",
+    ]);
+}
+
+#[test]
+fn an_unclaimed_background_fetch_finishes_on_its_own() {
+    // An aborted menu exits at once instead of waiting seconds for the fetch;
+    // the fetch is never killed, so it cannot leave .lock files behind.
+    let runner = MockCommandRunner::scripted(&[(1, "", ""), (0, "", "")]);
+
+    git(&runner).start_fetch();
+
+    assert!(runner.calls().last().unwrap().starts_with("spawn "), "calls: {:?}", runner.calls());
+}
+
+#[test]
+fn a_failed_background_fetch_is_retried_where_prompts_work() {
+    let runner = MockCommandRunner::scripted(&[(1, "", ""), (128, "", "Permission denied (publickey)"), (0, "", "")]);
+    let git = git(&runner);
+
+    git.start_fetch();
+    git.fetch().unwrap();
+
+    assert_eq!(runner.calls().last().unwrap(), "git fetch --all --prune --quiet");
+}
+
+#[test]
+fn a_background_fetch_keeps_the_users_own_ssh_command() {
+    let runner = MockCommandRunner::scripted(&[(0, "ssh -i ~/.ssh/work\n", ""), (0, "", "")]);
+    let git = git(&runner);
+
+    git.start_fetch();
+
+    assert_eq!(runner.calls()[1],
+        "spawn GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -i ~/.ssh/work -o BatchMode=yes: git fetch --all --prune --quiet");
+}
+
+#[test]
+fn without_a_background_fetch_the_fetch_runs_in_the_foreground() {
+    // An unreadable ssh setting or a failed spawn: nothing is started, and the
+    // fetch behaves as if it never was.
+    let unreadable = MockCommandRunner::scripted(&[(2, "", "bad config"), (0, "", "")]);
+    let git = git(&unreadable);
+    git.start_fetch();
+    git.fetch().unwrap();
+    assert_eq!(unreadable.calls(), vec!["git config --get core.sshCommand", "git fetch --all --prune --quiet"]);
+
+    let spawn_fails = SpawnFails(MockCommandRunner::scripted(&[(1, "", ""), (0, "", "")]));
+    let git = GitCli::new(&spawn_fails);
+    git.start_fetch();
+    git.fetch().unwrap();
+    assert_eq!(spawn_fails.0.calls(), vec!["git config --get core.sshCommand", "git fetch --all --prune --quiet"]);
 }
 
 // --- Exit-code semantics ---
@@ -73,26 +153,38 @@ fn an_unset_config_key_reads_as_none_rather_than_an_error() {
 }
 
 #[test]
-fn a_scoped_read_asks_git_for_that_scope_only() {
+fn a_scoped_section_read_returns_every_key_of_that_scope_in_one_call() {
     // `get_config` returns the *effective* value, which cannot tell a local
     // override from a global default. The config migration has to know which
     // file a value belongs in, so it reads each scope explicitly.
-    let runner = MockCommandRunner::scripted(&[(0, "cursor\n", "")]);
+    let runner = MockCommandRunner::scripted(&[(0, "gflow.worktree.editor code --wait\ngflow.worktree.enabled\n", "")]);
 
-    let value = git(&runner).get_config_at("gflow.worktree.editor", true).unwrap();
+    let values = git(&runner).config_section_at("gflow.worktree", true).unwrap();
 
-    assert_eq!(value, Some("cursor".to_string()));
-    assert_eq!(runner.calls(), vec!["git config --global --get gflow.worktree.editor"]);
+    assert_eq!(values, vec![
+        ("gflow.worktree.editor".to_string(), "code --wait".to_string()),
+        ("gflow.worktree.enabled".to_string(), String::new()),
+    ]);
+    assert_eq!(runner.calls(), vec![r"git config --global --get-regexp ^gflow\.worktree\."]);
 }
 
 #[test]
-fn a_scoped_read_of_the_local_scope_never_falls_back_to_global() {
+fn a_scoped_section_read_of_the_local_scope_never_falls_back_to_global() {
     let runner = MockCommandRunner::scripted(&[(1, "", "")]);
 
-    let value = git(&runner).get_config_at("gflow.worktree.editor", false).unwrap();
+    let values = git(&runner).config_section_at("gflow.worktree", false).unwrap();
 
-    assert_eq!(value, None, "unset in this scope means unset, not inherited");
-    assert_eq!(runner.calls(), vec!["git config --local --get gflow.worktree.editor"]);
+    assert_eq!(values, Vec::new(), "unset in this scope means unset, not inherited");
+    assert_eq!(runner.calls(), vec![r"git config --local --get-regexp ^gflow\.worktree\."]);
+}
+
+#[test]
+fn an_unreadable_config_section_is_an_error_not_an_empty_section() {
+    let runner = MockCommandRunner::scripted(&[(2, "", "bad config line 3")]);
+
+    let err = git(&runner).config_section_at("gflow.worktree", true).unwrap_err();
+
+    assert!(err.contains("bad config line 3"), "got: {err}");
 }
 
 #[test]
@@ -156,6 +248,32 @@ fn remote_branch_lists_drop_the_origin_head_pointer() {
     let runner = MockCommandRunner::ok("origin/HEAD\norigin/develop\norigin/feature/x\n");
 
     assert_eq!(git(&runner).list_remote_branches().unwrap(), vec!["develop", "feature/x"]);
+}
+
+#[test]
+fn remote_branch_divergence_reads_both_counts_for_every_branch_in_one_call() {
+    let runner = MockCommandRunner::ok("HEAD 0 0\ndevelop 9 5\nfeature/x 0 2\n");
+
+    let divergence = git(&runner).remote_branch_divergence("feature/child").unwrap();
+
+    assert_eq!(divergence, vec![
+        BranchDivergence { branch: "develop".into(), ahead: 9, behind: 5 },
+        BranchDivergence { branch: "feature/x".into(), ahead: 0, behind: 2 },
+    ], "origin/HEAD is a pointer, not a branch");
+    assert_eq!(runner.calls(), vec![
+        "git for-each-ref --format=%(refname:lstrip=3) %(ahead-behind:feature/child) refs/remotes/origin/",
+    ]);
+}
+
+#[test]
+fn remote_branch_divergence_rejects_output_it_cannot_read() {
+    for line in ["develop 9", "develop nine 5", "develop 9 five"] {
+        let runner = MockCommandRunner::ok(line);
+
+        let err = git(&runner).remote_branch_divergence("feature/child").unwrap_err();
+
+        assert_eq!(err, format!("Unexpected ahead-behind data from git: '{line}'"));
+    }
 }
 
 #[test]
@@ -249,12 +367,14 @@ fn ordinary_modifications_are_not_unmerged_paths() {
 }
 
 #[test]
-fn a_remote_tag_exists_when_ls_remote_prints_anything() {
-    let found = MockCommandRunner::ok("abc123\trefs/tags/v2.5.0\n");
-    assert!(git(&found).remote_tag_exists("v2.5.0").unwrap());
+fn a_tag_push_reports_whether_origin_received_the_tag() {
+    // --porcelain flags are not translated: `=` is "already up to date" in
+    // every locale, which is what lets the push double as its own guard.
+    let new = MockCommandRunner::ok("To origin\n*\trefs/tags/v2.5.0:refs/tags/v2.5.0\t[new tag]\nDone\n");
+    assert!(git(&new).push_tag("v2.5.0").unwrap());
 
-    let missing = MockCommandRunner::ok("");
-    assert!(!git(&missing).remote_tag_exists("v2.5.0").unwrap());
+    let present = MockCommandRunner::ok("To origin\n=\trefs/tags/v2.5.0:refs/tags/v2.5.0\t[up to date]\nDone\n");
+    assert!(!git(&present).push_tag("v2.5.0").unwrap());
 }
 
 #[test]
@@ -383,13 +503,13 @@ fn every_primitive_issues_its_documented_git_command() {
     let cases: Vec<(&str, Box<dyn Fn(&GitCli<'_>)>)> = vec![
         ("git rev-parse --abbrev-ref HEAD", Box::new(|g| { g.current_branch().ok(); })),
         // --prune so deleted remote branches stop showing up as PR targets.
-        ("git fetch --all --prune", Box::new(|g| { g.fetch().ok(); })),
+        ("git fetch --all --prune --quiet", Box::new(|g| { g.fetch().ok(); })),
         ("git checkout develop", Box::new(|g| { g.checkout("develop").ok(); })),
         ("git checkout -b feature/x develop", Box::new(|g| { g.create_branch("feature/x", "develop").ok(); })),
         ("git branch feature/x develop", Box::new(|g| { g.create_branch_no_checkout("feature/x", "develop").ok(); })),
         // -u sets the upstream, so the branch is comparable with origin afterwards.
         ("git push -u origin feature/x", Box::new(|g| { g.push("feature/x").ok(); })),
-        ("git push origin v2.5.0", Box::new(|g| { g.push_tag("v2.5.0").ok(); })),
+        ("git push --porcelain origin v2.5.0", Box::new(|g| { g.push_tag("v2.5.0").ok(); })),
         // Annotated (-a) tags carry an author and message; releases are annotated.
         ("git tag -a v2.5.0 -m chore: release 2.5.0", Box::new(|g| { g.create_tag("v2.5.0", "chore: release 2.5.0").ok(); })),
         // --no-ff keeps the merge commit: the gitflow history must show the merge.
@@ -400,7 +520,7 @@ fn every_primitive_issues_its_documented_git_command() {
         ("git tag --merged release/2.5.0", Box::new(|g| { g.tags_on_branch("release/2.5.0").ok(); })),
         // -D force-deletes: gflow only calls this once the branch is verifiably merged.
         ("git branch -D feature/x", Box::new(|g| { g.delete_branch_local("feature/x").ok(); })),
-        ("git push origin --delete feature/x", Box::new(|g| { g.delete_branch_remote("feature/x").ok(); })),
+        ("git push origin --delete feature/x feature/y", Box::new(|g| { g.delete_remote_branches(&["feature/x", "feature/y"]).ok(); })),
         ("git status --porcelain", Box::new(|g| { g.is_working_tree_clean().ok(); })),
         ("git for-each-ref --format=%(refname:short) refs/remotes/origin/", Box::new(|g| { g.list_remote_branches().ok(); })),
         // Both patterns: a release branch that exists only on origin must still
@@ -413,7 +533,6 @@ fn every_primitive_issues_its_documented_git_command() {
         ("git show-ref --verify --quiet refs/tags/v2.5.0", Box::new(|g| { g.tag_exists("v2.5.0").ok(); })),
         ("git show-ref --verify --quiet refs/heads/feature/x", Box::new(|g| { g.local_branch_exists("feature/x").ok(); })),
         ("git show-ref --verify --quiet refs/remotes/origin/feature/x", Box::new(|g| { g.remote_branch_exists("feature/x").ok(); })),
-        ("git ls-remote --tags origin v2.5.0", Box::new(|g| { g.remote_tag_exists("v2.5.0").ok(); })),
         // %x00 is load-bearing: the parser splits on NUL, the one byte a commit
         // message cannot contain. %B%n would split multi-paragraph messages.
         ("git log v2.5.0..develop --format=%B%x00", Box::new(|g| { g.commit_messages("v2.5.0", "develop").ok(); })),
@@ -531,6 +650,9 @@ impl CommandRunner for CannotSpawn {
     fn run(&self, _: &str, _: &[&str]) -> Result<CliOutput, String> {
         Err("git executable unavailable".into())
     }
+    fn spawn(&self, _: &str, _: &[&str], _: &[(&str, &str)]) -> Result<Box<dyn RunningCommand + '_>, String> {
+        Err("git executable unavailable".into())
+    }
 }
 
 type GitRead = fn(&dyn Git) -> Result<(), String>;
@@ -542,10 +664,11 @@ fn failed_git_reads_never_become_empty_or_clean_results() {
         ("git for-each-ref --format=%(refname:short) refs/remotes/origin/release/* refs/heads/release/*", |g| g.list_branches_matching("release/*").map(|_| ())),
         ("git status --porcelain", |g| g.is_working_tree_clean().map(|_| ())),
         ("git for-each-ref --format=%(refname:short) refs/remotes/origin/", |g| g.list_remote_branches().map(|_| ())),
+        ("git for-each-ref --format=%(refname:lstrip=3) %(ahead-behind:a) refs/remotes/origin/", |g| g.remote_branch_divergence("a").map(|_| ())),
         ("git rev-list --count a..b", |g| g.rev_list_count("a", "b").map(|_| ())),
         ("git rev-list --parents -n 1 a", |g| g.commit_parent_count("a").map(|_| ())),
         ("git log a..b --format=%B%x00", |g| g.commit_messages("a", "b").map(|_| ())),
-        ("git ls-remote --tags origin v1.0.0", |g| g.remote_tag_exists("v1.0.0").map(|_| ())),
+        ("git push --porcelain origin v1.0.0", |g| g.push_tag("v1.0.0").map(|_| ())),
         ("git rev-parse develop", |g| g.is_pushed("develop").map(|_| ())),
         ("git rev-parse --git-dir", |g| g.is_mid_merge().map(|_| ())),
         ("git status --porcelain", |g| g.has_unmerged_paths().map(|_| ())),
