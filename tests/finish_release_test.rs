@@ -145,6 +145,32 @@ fn bump_patch_protected_fresh_defers_the_tag_and_uses_the_new_version() {
 }
 
 #[test]
+fn bump_protected_never_tags_a_merged_version_pr_that_is_not_on_the_release_branch() {
+    // An abandoned first try of release/1.1.0 left a merged version PR behind.
+    let mut git = MockGit::new();
+    git.tags_on_branch = vec!["v1.1.0".to_string()];
+    git.tag_commits.insert("v1.1.0".to_string(), "release-tip".to_string());
+    let mut hosting = MockHosting::new();
+    hosting.merged_prs_to.insert(
+        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        LandedPr {
+            url: "https://github.com/org/repo/pull/3".to_string(),
+            head_sha: "old-chore-head".to_string(),
+            merge_commit_sha: "old-line-merge".to_string(),
+        },
+    );
+
+    bump_version(&git, &hosting, None, &patch_protected_cfg(), 1, 1).unwrap();
+
+    assert_eq!(git.calls(), vec![
+        "is_ancestor:old-line-merge:origin/release/1.1.0",
+        "tags_on_branch:release/1.1.0",
+        "create_tag:v1.1.1:chore: bump version to v1.1.1",
+        "push_tag:v1.1.1",
+    ]);
+}
+
+#[test]
 fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
     let mut git = MockGit::new();
     git.tags_on_branch = vec!["v1.1.0".to_string()];
@@ -159,11 +185,13 @@ fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
         },
     );
     git.parent_counts.insert("merge-commit-sha".to_string(), 2);
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let script = MockVersionScript::new();
 
     bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
+        "is_ancestor:merge-commit-sha:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0",
         "create_tag_at:v1.1.1:chore: bump version to v1.1.1:merge-commit-sha",
@@ -248,12 +276,14 @@ fn bump_protected_cuts_the_deferred_tag_at_the_merge_commit_once_the_pr_lands() 
         },
     );
     git.parent_counts.insert("merge-commit-sha".to_string(), 2);
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
+        "is_ancestor:merge-commit-sha:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0-rc.1",
         "create_tag_at:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2:merge-commit-sha",
@@ -283,12 +313,14 @@ fn bump_protected_already_consumed_falls_through_to_the_fresh_path() {
         },
     );
     git.parent_counts.insert("merge-commit-sha".to_string(), 2);
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
+        "is_ancestor:merge-commit-sha:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0-rc.1",
         "local_branch_exists:release-chore/1.1.0/set-version",
@@ -1759,7 +1791,8 @@ fn bump_protected_merged_pr_with_no_prior_tag_cuts_the_first_rc_at_the_merge_com
     // A branch whose very first RC went out through a chore PR has no tag yet
     // to compare against — nothing is "consumed", so the deferred tag is cut
     // at that PR's merge commit.
-    let git = MockGit::new();
+    let mut git = MockGit::new();
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
@@ -1999,6 +2032,7 @@ fn free_bump_stops_when_git_cannot_validate_commit_or_publish() {
 #[test]
 fn protected_bump_stops_after_failed_merged_version_step() {
     for call in [
+        "is_ancestor:merged:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0-rc.1",
         "create_tag_at:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2:merged",
@@ -2008,6 +2042,7 @@ fn protected_bump_stops_after_failed_merged_version_step() {
         let mut git = release_git();
         git.tag_commits
             .insert("v1.1.0-rc.1".into(), "previous".into());
+        git.ancestors.insert(("merged".into(), "origin/release/1.1.0".into()));
         git.fail_call = Some((call.into(), 1));
         let mut hosting = MockHosting::new();
         hosting.merged_prs_to.insert(
@@ -2032,6 +2067,7 @@ fn protected_bump_stops_when_consumed_version_cleanup_fails() {
     let mut git = release_git();
     git.tag_commits
         .insert("v1.1.0-rc.1".into(), "merged".into());
+    git.ancestors.insert(("merged".into(), "origin/release/1.1.0".into()));
     git.fail_call = Some((call.into(), 1));
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(

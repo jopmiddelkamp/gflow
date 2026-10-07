@@ -242,6 +242,8 @@ gflow start hotfix-fix --name <name> [--no-checkout] [--no-worktree]     # must 
 
 `--base` defaults to `develop` when omitted.
 
+Every start branches from the latest `origin/<base>`, which the fetch has just updated, not from your local copy, which can be behind. The local base is used only when it has commits that are not on origin yet.
+
 `--major` / `--minor` on `start release` skips the interactive prompt and forces the bump level. Useful for scripts and AI agents.
 
 `--no-checkout` creates and pushes the branch without switching to it. You stay on your current branch. Designed for [git worktree](https://git-scm.com/docs/git-worktree) workflows. Not available for `start release`.

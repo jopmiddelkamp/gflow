@@ -283,7 +283,9 @@ impl Git for MockGit {
 
     fn list_tags(&self) -> Result<Vec<String>, String> {
         self.record("list_tags".to_string())?;
-        Ok(self.tags.clone())
+        let mut existing: Vec<String> = self.existing_tags.iter().filter(|tag| !self.tags.contains(tag)).cloned().collect();
+        existing.sort();
+        Ok(self.tags.iter().cloned().chain(existing).collect())
     }
 
     fn list_branches_matching(&self, pattern: &str) -> Result<Vec<String>, String> {
@@ -641,6 +643,10 @@ impl HostingPlatform for MockHosting {
     fn merged_pr(&self, head: &str) -> Result<Option<gflow::hosting::MergedPr>, String> {
         self.record(format!("merged_pr:{head}"))?;
         Ok(self.merged_pr.clone())
+    }
+
+    fn prefetch_prs(&self, head: &str) -> Result<(), String> {
+        self.record(format!("prefetch_prs:{head}"))
     }
 
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>, String> {

@@ -3,6 +3,7 @@ pub mod finish_work;
 pub mod finish_release;
 pub mod finish_hotfix;
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::git::Git;
@@ -591,15 +592,15 @@ pub(crate) fn run_version_script(git: &dyn Git, script: &dyn VersionScript, vers
 ///
 /// - `hotfix/*` (both strategies) and `release/*` under rc: the clean tag
 ///   (e.g. `v1.1.0`, never the `-rc.N` tag) exists — it is only ever cut at
-///   finish, so its existence is the shipped record. Branches whose version
-///   does not parse stay in, unchanged from today's behavior.
+///   finish, so its existence is the shipped record. Either spelling counts:
+///   a repo tagged by a pipeline may carry only `X.Y.Z`, and
+///   `find_latest_tag` already trusts those. Branches whose version does not
+///   parse stay in.
 /// - `release/*` under patch: the clean tag is cut at branch *creation*, so it
 ///   proves nothing. Shipped is the branch being an ancestor of
 ///   `origin/{main}`, or — under protected mode, where a squash landing leaves
 ///   no ancestry — a merged landing PR into the mainline (`leg_landed`).
-///   Derived, never stored. The ancestry check reads `origin/{branch}` when
-///   the remote branch exists (the local name may be a remote-only branch that
-///   resolves to nothing on a fresh clone), falling back to the local name.
+///   Derived, never stored.
 ///
 /// Newest version first, so a caller that takes the first entry lands on the
 /// line most likely to still be alive; names that carry no version come last,
@@ -608,28 +609,18 @@ pub(crate) fn run_version_script(git: &dyn Git, script: &dyn VersionScript, vers
 pub(crate) fn open_versioned_branches(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, main_branch: &str, prefix: &str) -> Result<Vec<String>, String> {
     let version_of = |branch: &str| branch.strip_prefix(&format!("{prefix}/")).and_then(SemVer::parse);
     let branches = git.list_branches_matching(&format!("{prefix}/*"))?;
-    let mut open = Vec::with_capacity(branches.len());
-    for branch in branches {
-        let tag_is_shipped_record = cfg.bump_strategy == BumpStrategy::Rc || prefix == "hotfix";
-        let shipped = if tag_is_shipped_record {
-            match version_of(&branch) {
-                Some(version) => version_tagged(git, &version.to_release())?,
-                None => false,
-            }
-        } else {
-            let branch_ref = if git.remote_branch_exists(&branch)? {
-                format!("origin/{branch}")
-            } else {
-                branch.clone()
-            };
-            git.is_ancestor(&branch_ref, &format!("origin/{main_branch}"))?
-                || (cfg.mode == Mode::Protected
-                    && leg_landed(git, hosting, &branch, main_branch)?.is_some())
-        };
-        if !shipped {
-            open.push(branch);
-        }
+    if branches.is_empty() {
+        return Ok(branches);
     }
+    let mut open = if cfg.bump_strategy == BumpStrategy::Rc || prefix == "hotfix" {
+        let tags: HashSet<String> = git.list_tags()?.into_iter().collect();
+        branches
+            .into_iter()
+            .filter(|branch| !version_of(branch).is_some_and(|v| v.to_release().tag_names().iter().any(|tag| tags.contains(tag))))
+            .collect()
+    } else {
+        not_in_main(git, hosting, cfg, main_branch, branches)?
+    };
     open.sort_by_cached_key(|branch| {
         let version = version_of(branch);
         (version.is_none(), std::cmp::Reverse(version), branch.clone())
@@ -637,16 +628,37 @@ pub(crate) fn open_versioned_branches(git: &dyn Git, hosting: &dyn HostingPlatfo
     Ok(open)
 }
 
-/// A tag naming `version` in any spelling `SemVer::parse` accepts. gflow tags
-/// `vX.Y.Z`; a repo tagged by a pipeline may carry only `X.Y.Z`, and
-/// `find_latest_tag` already trusts those — so must the shipped record.
-fn version_tagged(git: &dyn Git, version: &SemVer) -> Result<bool, String> {
-    for tag in version.tag_names() {
-        if git.tag_exists(&tag)? {
-            return Ok(true);
+/// The patch strategy's shipped record: in `origin/{main}`, or landed there
+/// through a merged PR. All origin branches are compared in one query; git
+/// < 2.41 fails it, and then each branch is checked on its own, as is a
+/// branch that exists only locally. The per-branch check reads
+/// `origin/{branch}` when it exists: the local name of a remote-only branch
+/// resolves to nothing on a fresh clone.
+fn not_in_main(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, main_branch: &str, branches: Vec<String>) -> Result<Vec<String>, String> {
+    let origin_main = format!("origin/{main_branch}");
+    let ahead_of_main: HashMap<String, u32> = git
+        .remote_branch_divergence(&origin_main)
+        .map(|all| all.into_iter().map(|d| (d.branch, d.ahead)).collect())
+        .unwrap_or_default();
+    let mut open = Vec::with_capacity(branches.len());
+    for branch in branches {
+        let in_main = match ahead_of_main.get(&branch) {
+            Some(&ahead) => ahead == 0,
+            None => {
+                let branch_ref = if git.remote_branch_exists(&branch)? {
+                    format!("origin/{branch}")
+                } else {
+                    branch.clone()
+                };
+                git.is_ancestor(&branch_ref, &origin_main)?
+            }
+        };
+        let landed = !in_main && cfg.mode == Mode::Protected && leg_landed(git, hosting, &branch, main_branch)?.is_some();
+        if !in_main && !landed {
+            open.push(branch);
         }
     }
-    Ok(false)
+    Ok(open)
 }
 
 /// Guidance appended to a merge conflict during a release/hotfix finish.

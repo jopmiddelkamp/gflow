@@ -78,7 +78,7 @@ pub fn run(
         Some(Commands::Finish { accept_merge_type: true, .. }) | Some(Commands::Sync { accept_merge_type: true })
     );
 
-    if command.is_none() {
+    if !matches!(command, Some(Commands::Finish { abort: true, .. })) {
         git.start_fetch();
     }
 
@@ -97,6 +97,11 @@ pub fn run(
     }
 
     println!("Fetching latest...");
+    // The flow's first question is about this branch's PRs, and the answer
+    // does not depend on the fetch.
+    if matches!(action, Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix | Action::FinishReleaseChore) {
+        hosting.prefetch_prs(&branch_name)?;
+    }
     git.fetch()?;
 
     // Optional worktree flow: when enabled (and not opted out) for a start, treat
@@ -464,14 +469,14 @@ mod tests {
             ("develop", Action::StartWorkBranch {
                 prefix: "feature".into(), name: "login".into(), from: "develop".into(),
                 no_checkout: false, no_worktree: false,
-            }, "create_branch:feature/login:develop"),
+            }, "create_branch:feature/login:origin/develop"),
             ("develop", Action::StartWorkBranch {
                 prefix: "docs".into(), name: "guide".into(), from: "main".into(),
                 no_checkout: true, no_worktree: false,
             }, "create_branch_no_checkout:docs/guide:main"),
             ("develop", Action::StartRelease {
                 release_type: Some(ReleaseType::Minor), no_worktree: false,
-            }, "create_branch:release/2.5.0:develop"),
+            }, "create_branch:release/2.5.0:origin/develop"),
             ("release/2.5.0", Action::StartReleaseFix {
                 name: "login".into(), no_checkout: false, no_worktree: false,
             }, "create_branch:release-fix/2.5.0/login:release/2.5.0"),
