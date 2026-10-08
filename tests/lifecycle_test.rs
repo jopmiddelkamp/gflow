@@ -253,17 +253,17 @@ fn unmerged_paths_block_even_when_the_merge_was_committed() {
         "no mutation may run; calls: {calls:?}");
 }
 
-// --- Re-run from a finish branch (post-conflict switch-back) ---
-// A conflicted landing-branch merge leaves the worktree on the finish branch
-// (see ensure_finish_branch). After the user commits the resolution, re-running
+// --- Re-run from a landing branch (post-conflict switch-back) ---
+// A conflicted landing-branch merge leaves the worktree on the landing branch
+// (see ensure_landing_branch). After the user commits the resolution, re-running
 // the finish/sync must switch back to the source branch and continue — the
 // conflict hint promises exactly that.
 
-/// release_git() left on its own finish branch, resolution committed (clean,
+/// release_git() left on its own landing branch, resolution committed (clean,
 /// not mid-merge), source pushed — ready for a protected re-run.
-fn resolved_finish_branch_git(target: &str) -> MockGit {
+fn resolved_landing_branch_git(target: &str) -> MockGit {
     let mut git = release_git();
-    git.current_branch = format!("finish/release-2.5.0-into-{target}");
+    git.current_branch = format!("landing/release-2.5.0-into-{target}");
     git.pushed_branches.insert("release/2.5.0".to_string());
     git
 }
@@ -276,8 +276,8 @@ fn run_protected(git: &MockGit, command: Option<Commands>) -> Result<(), String>
 }
 
 #[test]
-fn finish_on_a_finish_branch_switches_back_to_the_source_first() {
-    let git = resolved_finish_branch_git("main");
+fn finish_on_a_landing_branch_switches_back_to_the_source_first() {
+    let git = resolved_landing_branch_git("main");
 
     let result = run_protected(&git, finish_cmd());
 
@@ -291,8 +291,8 @@ fn finish_on_a_finish_branch_switches_back_to_the_source_first() {
 }
 
 #[test]
-fn sync_on_a_finish_branch_switches_back_to_the_source_first() {
-    let git = resolved_finish_branch_git("develop");
+fn sync_on_a_landing_branch_switches_back_to_the_source_first() {
+    let git = resolved_landing_branch_git("develop");
 
     let result = run_protected(&git, Some(Commands::Sync { accept_merge_type: false }));
 
@@ -302,8 +302,8 @@ fn sync_on_a_finish_branch_switches_back_to_the_source_first() {
 }
 
 #[test]
-fn mid_merge_on_a_finish_branch_blocks_with_the_merge_message_not_a_switch() {
-    let mut git = resolved_finish_branch_git("main");
+fn mid_merge_on_a_landing_branch_blocks_with_the_merge_message_not_a_switch() {
+    let mut git = resolved_landing_branch_git("main");
     git.mid_merge = true;
 
     let err = run_protected(&git, finish_cmd()).unwrap_err();
@@ -318,8 +318,8 @@ fn mid_merge_on_a_finish_branch_blocks_with_the_merge_message_not_a_switch() {
 }
 
 #[test]
-fn unmerged_paths_on_a_finish_branch_block_without_a_switch() {
-    let mut git = resolved_finish_branch_git("main");
+fn unmerged_paths_on_a_landing_branch_block_without_a_switch() {
+    let mut git = resolved_landing_branch_git("main");
     git.unmerged_paths = true;
 
     let err = run_protected(&git, finish_cmd()).unwrap_err();
@@ -330,8 +330,8 @@ fn unmerged_paths_on_a_finish_branch_block_without_a_switch() {
 }
 
 #[test]
-fn abort_on_a_finish_branch_does_not_switch() {
-    let git = resolved_finish_branch_git("main");
+fn abort_on_a_landing_branch_does_not_switch() {
+    let git = resolved_landing_branch_git("main");
 
     let result = run_protected(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false }));
 
@@ -341,13 +341,13 @@ fn abort_on_a_finish_branch_does_not_switch() {
 }
 
 #[test]
-fn finish_with_explicit_base_on_a_finish_branch_does_not_switch() {
-    let git = resolved_finish_branch_git("main");
+fn finish_with_explicit_base_on_a_landing_branch_does_not_switch() {
+    let git = resolved_landing_branch_git("main");
 
     run_protected(&git, Some(Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false }))
-        .expect_err("a finish branch is not a work branch, so --base must be rejected");
+        .expect_err("a landing branch is not a work branch, so --base must be rejected");
     assert!(!git.calls().contains(&"checkout:release/2.5.0".to_string()),
-        "an explicit --base is not a finish-branch resume; calls: {:?}", git.calls());
+        "an explicit --base is not a landing-branch resume; calls: {:?}", git.calls());
 }
 
 // --- Stash policy (dirty start: stash before mutation, pop on success) ---
@@ -1077,9 +1077,9 @@ fn failed_preflight_stops_before_state_or_flow_mutations() {
         ("develop", "has_unmerged_paths"),
         ("develop", "fetch"),
         ("develop", "is_working_tree_clean"),
-        ("finish/release-2.5.0-into-main", "is_mid_merge"),
-        ("finish/release-2.5.0-into-main", "has_unmerged_paths"),
-        ("finish/release-2.5.0-into-main", "checkout:release/2.5.0"),
+        ("landing/release-2.5.0-into-main", "is_mid_merge"),
+        ("landing/release-2.5.0-into-main", "has_unmerged_paths"),
+        ("landing/release-2.5.0-into-main", "checkout:release/2.5.0"),
     ] {
         let mut git = git_on(branch);
         git.fail_call = Some((failure.into(), 1));

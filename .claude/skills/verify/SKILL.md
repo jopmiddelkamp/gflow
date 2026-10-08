@@ -41,6 +41,6 @@ that comes first on `PATH`. Never point it at a real repo or remote.
 Menu abort during a slow fetch (exit time, fetch finishes detached); fetch that
 needs a prompt (foreground retry); protected release finish over three runs
 (az list calls per run, `push --porcelain` tag skip, one `push --delete` for all
-finish branches); work-branch finish with several candidates, with and without
+landing branches); work-branch finish with several candidates, with and without
 ahead-behind; a full 1000-row PR list (the head's own list, then reuse); a
 work finish (one `pr list --source-branch` while the fetch runs).

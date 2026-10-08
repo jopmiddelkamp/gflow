@@ -737,10 +737,10 @@ fn merged_pr_cleans_up_hotfix_fix_too() {
 }
 
 #[test]
-fn finish_branches_are_never_offered_as_pr_target() {
+fn landing_branches_are_never_offered_as_pr_target() {
     let mut git = MockGit::new();
     git.current_branch = "feature/login".to_string();
-    git.remote_branches = vec!["finish/release-1.2.0-into-main".to_string(), "develop".to_string()];
+    git.remote_branches = vec!["landing/release-1.2.0-into-main".to_string(), "develop".to_string()];
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new(); // unscripted: any select would error
     let branch_type = BranchType::Feature { name: "login".to_string() };
@@ -748,9 +748,9 @@ fn finish_branches_are_never_offered_as_pr_target() {
     finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
 
     assert!(prompter.calls().is_empty(),
-        "finish/* is landing machinery and must be filtered; calls: {:?}", prompter.calls());
+        "landing/* is landing machinery and must be filtered; calls: {:?}", prompter.calls());
     assert!(hosting.calls()[1].starts_with("create_or_get_pr:feature/login:develop:"),
-        "finish/* must never be a PR target, got: {}", hosting.calls()[1]);
+        "landing/* must never be a PR target, got: {}", hosting.calls()[1]);
 }
 
 fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {

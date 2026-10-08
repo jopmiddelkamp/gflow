@@ -56,7 +56,7 @@ pub trait HostingPlatform {
     /// PR yields `None`.
     fn merged_pr_to(&self, head: &str, base: &str) -> Result<Option<LandedPr>>;
     /// URL of the newest OPEN `head`→`base` PR, if any. Exists for the
-    /// finish-branch migration: an open landing PR from an older gflow (head =
+    /// landing-branch migration: an open landing PR from an older gflow (head =
     /// the release/hotfix branch itself) must be surfaced, not duplicated.
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>>;
     /// Load the PRs of `head` now, while other work runs, for the lookups that

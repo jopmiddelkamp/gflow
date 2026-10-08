@@ -477,16 +477,16 @@ fn sync_protected_opens_develop_pr_and_stops() {
 
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:develop",
-        "merged_pr_to:finish/release-1.1.0-into-develop:develop",
+        "merged_pr_to:landing/release-1.1.0-into-develop:develop",
         "merged_pr_to:release/1.1.0:develop",
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: sync release 1.1.0 with develop:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: sync release 1.1.0 with develop:empty-body",
         "copy_text:chore: sync release 1.1.0 with develop\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "checkout:develop"), "must never land into develop locally; calls: {calls:?}");
-    assert!(calls.iter().filter(|c| c.starts_with("merge:")).all(|c| c.ends_with("into finish/release-1.1.0-into-develop")),
-        "merges may only append to the finish branch; calls: {calls:?}");
+    assert!(calls.iter().filter(|c| c.starts_with("merge:")).all(|c| c.ends_with("into landing/release-1.1.0-into-develop")),
+        "merges may only append to the landing branch; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c == "push:develop"), "must not push develop directly; calls: {calls:?}");
 }
 
@@ -506,7 +506,7 @@ fn sync_protected_already_landed_is_a_noop() {
         "already-landed sync must make no mutating git calls beyond the landed-check reads");
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:develop",
-        "merged_pr_to:finish/release-1.1.0-into-develop:develop",
+        "merged_pr_to:landing/release-1.1.0-into-develop:develop",
         "merged_pr_to:release/1.1.0:develop",
     ]);
 }
@@ -527,9 +527,9 @@ fn sync_protected_stale_merged_pr_reopens_new_pr() {
 
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:develop",
-        "merged_pr_to:finish/release-1.1.0-into-develop:develop",
+        "merged_pr_to:landing/release-1.1.0-into-develop:develop",
         "merged_pr_to:release/1.1.0:develop",
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: sync release 1.1.0 with develop:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: sync release 1.1.0 with develop:empty-body",
         "copy_text:chore: sync release 1.1.0 with develop\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -674,22 +674,22 @@ fn protected_patch_finish_opens_main_pr_without_any_tag_machinery() {
         "rev_list_count:v1.1.0:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
         "is_pushed:release/1.1.0",
-        "remote_branch_exists:finish/release-1.1.0-into-main",
-        "local_branch_exists:finish/release-1.1.0-into-main",
-        "create_branch_no_checkout:finish/release-1.1.0-into-main:release/1.1.0",
-        "is_ancestor:release/1.1.0:finish/release-1.1.0-into-main",
-        "is_ancestor:origin/main:finish/release-1.1.0-into-main",
+        "remote_branch_exists:landing/release-1.1.0-into-main",
+        "local_branch_exists:landing/release-1.1.0-into-main",
+        "create_branch_no_checkout:landing/release-1.1.0-into-main:release/1.1.0",
+        "is_ancestor:release/1.1.0:landing/release-1.1.0-into-main",
+        "is_ancestor:origin/main:landing/release-1.1.0-into-main",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-main",
-        "merge:origin/main:chore: merge main into finish/release-1.1.0-into-main",
+        "checkout:landing/release-1.1.0-into-main",
+        "merge:origin/main:chore: merge main into landing/release-1.1.0-into-main",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-main",
+        "push:landing/release-1.1.0-into-main",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
-        "create_or_get_pr:finish/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
         "copy_text:chore: merge release 1.1.0 into main\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -727,7 +727,7 @@ fn protected_patch_finish_completes_after_both_legs_without_tagging() {
         "commit_parent_count:mc2",
         "branch_sha:release/1.1.0",
         "branch_sha:release/1.1.0",
-        "list_branches_matching:finish/release-1.1.0-into-*",
+        "list_branches_matching:landing/release-1.1.0-into-*",
         "current_branch",
         "is_linked_worktree",
         "worktree_of:main",
@@ -934,7 +934,7 @@ fn protected_finish_rc_gate_blocks_before_pr() {
     assert!(err.contains("gflow bump"), "got: {err}");
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
     ]);
 }
@@ -969,25 +969,25 @@ fn protected_finish_tags_merge_commit_then_opens_develop_pr() {
         "is_ancestor:release/1.1.0:origin/develop",
         "remote_branch_exists:release/1.1.0",
         "is_pushed:release/1.1.0",
-        "remote_branch_exists:finish/release-1.1.0-into-develop",
-        "local_branch_exists:finish/release-1.1.0-into-develop",
-        "create_branch_no_checkout:finish/release-1.1.0-into-develop:release/1.1.0",
-        "is_ancestor:release/1.1.0:finish/release-1.1.0-into-develop",
-        "is_ancestor:origin/develop:finish/release-1.1.0-into-develop",
+        "remote_branch_exists:landing/release-1.1.0-into-develop",
+        "local_branch_exists:landing/release-1.1.0-into-develop",
+        "create_branch_no_checkout:landing/release-1.1.0-into-develop:release/1.1.0",
+        "is_ancestor:release/1.1.0:landing/release-1.1.0-into-develop",
+        "is_ancestor:origin/develop:landing/release-1.1.0-into-develop",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-develop",
-        "merge:origin/develop:chore: merge develop into finish/release-1.1.0-into-develop",
+        "checkout:landing/release-1.1.0-into-develop",
+        "merge:origin/develop:chore: merge develop into landing/release-1.1.0-into-develop",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-develop",
+        "push:landing/release-1.1.0-into-develop",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
         "open_pr_to:release/1.1.0:develop",
-        "merged_pr_to:finish/release-1.1.0-into-develop:develop",
+        "merged_pr_to:landing/release-1.1.0-into-develop:develop",
         "merged_pr_to:release/1.1.0:develop",
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body",
         "copy_text:chore: merge release 1.1.0 into develop\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -1078,7 +1078,7 @@ fn protected_finish_completes_after_develop_merge() {
         "commit_parent_count:mc2",
         "branch_sha:release/1.1.0",
         "branch_sha:release/1.1.0",
-        "list_branches_matching:finish/release-1.1.0-into-*",
+        "list_branches_matching:landing/release-1.1.0-into-*",
         "current_branch",
         "is_linked_worktree",
         "worktree_of:main",
@@ -1093,7 +1093,7 @@ fn protected_finish_completes_after_develop_merge() {
 #[test]
 fn protected_release_in_its_own_worktree_removes_the_worktree_last() {
     // The process stands in the release's linked worktree: removing it destroys
-    // the process cwd, so every other git call — finish-branch cleanup
+    // the process cwd, so every other git call — landing-branch cleanup
     // included — must have happened before.
     let mut git = MockGit::new();
     git.current_branch = "release/1.1.0".to_string();
@@ -1106,9 +1106,9 @@ fn protected_release_in_its_own_worktree_removes_the_worktree_last() {
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
     git.ancestors.insert(("mc2".to_string(), "origin/develop".to_string()));
-    git.branches_matching_by.insert("finish/release-1.1.0-into-*".to_string(), vec![
-        "finish/release-1.1.0-into-develop".to_string(),
-        "finish/release-1.1.0-into-main".to_string(),
+    git.branches_matching_by.insert("landing/release-1.1.0-into-*".to_string(), vec![
+        "landing/release-1.1.0-into-develop".to_string(),
+        "landing/release-1.1.0-into-main".to_string(),
     ]);
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(("release/1.1.0".to_string(), "main".to_string()), landed("relsha", "mc1"));
@@ -1119,15 +1119,15 @@ fn protected_release_in_its_own_worktree_removes_the_worktree_last() {
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"list_branches_matching:finish/release-1.1.0-into-*".to_string()),
-        "finish branches are still cleaned; calls: {calls:?}");
+    assert!(calls.contains(&"list_branches_matching:landing/release-1.1.0-into-*".to_string()),
+        "landing branches are still cleaned; calls: {calls:?}");
     assert_eq!(calls.last().map(String::as_str), Some("remove_current_worktree"),
         "no git call may follow worktree removal — the process cwd is gone; calls: {calls:?}");
 }
 
 #[test]
 fn protected_finish_tag_identity_mismatch_is_fatal() {
-    for head in ["release/1.1.0", "finish/release-1.1.0-into-main"] {
+    for head in ["release/1.1.0", "landing/release-1.1.0-into-main"] {
         let mut git = MockGit::new();
         git.branch_shas.insert("release/1.1.0".to_string(), "relsha".to_string());
         git.existing_tags.insert("v1.1.0".to_string());
@@ -1280,7 +1280,7 @@ fn protected_finish_cleans_up_when_the_branch_moved_after_the_tag_landed() {
         "commit_parent_count:mc2",
         "branch_sha:release/1.1.0",
         "branch_sha:release/1.1.0",
-        "list_branches_matching:finish/release-1.1.0-into-*",
+        "list_branches_matching:landing/release-1.1.0-into-*",
         "current_branch",
         "local_branch_exists:release/1.1.0",
         "delete_branch_local:release/1.1.0",
@@ -1289,10 +1289,10 @@ fn protected_finish_cleans_up_when_the_branch_moved_after_the_tag_landed() {
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
         "open_pr_to:release/1.1.0:develop",
-        "merged_pr_to:finish/release-1.1.0-into-develop:develop",
+        "merged_pr_to:landing/release-1.1.0-into-develop:develop",
         "merged_pr_to:release/1.1.0:develop",
     ]);
     let calls = git.calls();
@@ -1305,7 +1305,7 @@ fn protected_finish_keeps_the_branch_when_its_tip_landed_nowhere() {
     // Same landed world as the test above, except the branch's current tip is
     // in neither the tag's commit nor the develop landing — commits that never
     // went anywhere. The strict develop-leg check re-opens the leg with a
-    // refreshed finish branch instead of completing, so nothing is deleted and
+    // refreshed landing branch instead of completing, so nothing is deleted and
     // the commits reach develop through a fresh PR.
     let mut git = MockGit::new();
     git.existing_tags.insert("v1.1.0".to_string());
@@ -1329,10 +1329,10 @@ fn protected_finish_keeps_the_branch_when_its_tip_landed_nowhere() {
     assert!(!calls.iter().any(|c| c.starts_with("delete_remote_branches")), "unlanded commits must not be deleted; calls: {calls:?}");
     let hosting_calls = hosting.calls();
     assert_eq!(hosting_calls[hosting_calls.len() - 3..], [
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
         "copy_text:chore: merge release 1.1.0 into develop\nhttps://github.com/org/repo/pull/1".to_string(),
         "open_url:https://github.com/org/repo/pull/1".to_string(),
-    ], "the develop leg must re-open with a finish-branch PR and put it in the browser");
+    ], "the develop leg must re-open with a landing-branch PR and put it in the browser");
 }
 
 // --- Reconcile edges (exercised through run 1's main-PR step) ---
@@ -1351,22 +1351,22 @@ fn protected_finish_pushes_when_remote_branch_missing_before_opening_pr() {
         "rev_list_count:v1.1.0-rc.1:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
         "push:release/1.1.0",
-        "remote_branch_exists:finish/release-1.1.0-into-main",
-        "local_branch_exists:finish/release-1.1.0-into-main",
-        "create_branch_no_checkout:finish/release-1.1.0-into-main:release/1.1.0",
-        "is_ancestor:release/1.1.0:finish/release-1.1.0-into-main",
-        "is_ancestor:origin/main:finish/release-1.1.0-into-main",
+        "remote_branch_exists:landing/release-1.1.0-into-main",
+        "local_branch_exists:landing/release-1.1.0-into-main",
+        "create_branch_no_checkout:landing/release-1.1.0-into-main:release/1.1.0",
+        "is_ancestor:release/1.1.0:landing/release-1.1.0-into-main",
+        "is_ancestor:origin/main:landing/release-1.1.0-into-main",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-main",
-        "merge:origin/main:chore: merge main into finish/release-1.1.0-into-main",
+        "checkout:landing/release-1.1.0-into-main",
+        "merge:origin/main:chore: merge main into landing/release-1.1.0-into-main",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-main",
+        "push:landing/release-1.1.0-into-main",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
-        "create_or_get_pr:finish/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
         "copy_text:chore: merge release 1.1.0 into main\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -1390,16 +1390,16 @@ fn protected_finish_pushes_when_local_ahead_of_origin() {
         "is_pushed:release/1.1.0",
         "is_ancestor:origin/release/1.1.0:release/1.1.0",
         "push:release/1.1.0",
-        "remote_branch_exists:finish/release-1.1.0-into-main",
-        "local_branch_exists:finish/release-1.1.0-into-main",
-        "create_branch_no_checkout:finish/release-1.1.0-into-main:release/1.1.0",
-        "is_ancestor:release/1.1.0:finish/release-1.1.0-into-main",
-        "is_ancestor:origin/main:finish/release-1.1.0-into-main",
+        "remote_branch_exists:landing/release-1.1.0-into-main",
+        "local_branch_exists:landing/release-1.1.0-into-main",
+        "create_branch_no_checkout:landing/release-1.1.0-into-main:release/1.1.0",
+        "is_ancestor:release/1.1.0:landing/release-1.1.0-into-main",
+        "is_ancestor:origin/main:landing/release-1.1.0-into-main",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-main",
-        "merge:origin/main:chore: merge main into finish/release-1.1.0-into-main",
+        "checkout:landing/release-1.1.0-into-main",
+        "merge:origin/main:chore: merge main into landing/release-1.1.0-into-main",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-main",
+        "push:landing/release-1.1.0-into-main",
     ]);
 }
 
@@ -1504,10 +1504,10 @@ fn finish_release_in_its_own_worktree_removes_the_worktree_last() {
     assert!(detach < del, "calls: {calls:?}");
 }
 
-// --- Protected landings via finish/* branches ---
+// --- Protected landings via landing/* branches ---
 
 #[test]
-fn protected_release_opens_main_pr_from_the_finish_branch() {
+fn protected_release_opens_main_pr_from_the_landing_branch() {
     let mut git = MockGit::new();
     git.tags_on_branch = vec!["v1.1.0-rc.2".to_string()];
     git.existing_remote_branches.insert("release/1.1.0".to_string());
@@ -1522,36 +1522,36 @@ fn protected_release_opens_main_pr_from_the_finish_branch() {
         "rev_list_count:v1.1.0-rc.2:release/1.1.0",
         "remote_branch_exists:release/1.1.0",
         "is_pushed:release/1.1.0",
-        "remote_branch_exists:finish/release-1.1.0-into-main",
-        "local_branch_exists:finish/release-1.1.0-into-main",
-        "create_branch_no_checkout:finish/release-1.1.0-into-main:release/1.1.0",
-        "is_ancestor:release/1.1.0:finish/release-1.1.0-into-main",
-        "is_ancestor:origin/main:finish/release-1.1.0-into-main",
+        "remote_branch_exists:landing/release-1.1.0-into-main",
+        "local_branch_exists:landing/release-1.1.0-into-main",
+        "create_branch_no_checkout:landing/release-1.1.0-into-main:release/1.1.0",
+        "is_ancestor:release/1.1.0:landing/release-1.1.0-into-main",
+        "is_ancestor:origin/main:landing/release-1.1.0-into-main",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-main",
-        "merge:origin/main:chore: merge main into finish/release-1.1.0-into-main",
+        "checkout:landing/release-1.1.0-into-main",
+        "merge:origin/main:chore: merge main into landing/release-1.1.0-into-main",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-main",
+        "push:landing/release-1.1.0-into-main",
     ]);
     assert_eq!(hosting.calls(), vec![
         "open_pr_to:release/1.1.0:main",
-        "merged_pr_to:finish/release-1.1.0-into-main:main",
+        "merged_pr_to:landing/release-1.1.0-into-main:main",
         "merged_pr_to:release/1.1.0:main",
-        "create_or_get_pr:finish/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
+        "create_or_get_pr:landing/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body",
         "copy_text:chore: merge release 1.1.0 into main\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "checkout:main"), "must never land into the target locally; calls: {calls:?}");
-    assert!(calls.iter().filter(|c| c.starts_with("merge:")).all(|c| c.ends_with("into finish/release-1.1.0-into-main")),
-        "merges may only append to the finish branch; calls: {calls:?}");
+    assert!(calls.iter().filter(|c| c.starts_with("merge:")).all(|c| c.ends_with("into landing/release-1.1.0-into-main")),
+        "merges may only append to the landing branch; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("create_tag")), "must not tag before main lands; calls: {calls:?}");
 }
 
 #[test]
 fn protected_release_conflicted_target_merge_stops_before_opening_the_pr() {
     // The conflict surfaces locally, mid-run: the tree is left mid-merge on the
-    // finish branch with recovery steps, nothing is pushed, no PR opens.
+    // landing branch with recovery steps, nothing is pushed, no PR opens.
     let mut git = MockGit::new();
     git.tags_on_branch = vec!["v1.1.0-rc.2".to_string()];
     git.existing_remote_branches.insert("release/1.1.0".to_string());
@@ -1561,37 +1561,37 @@ fn protected_release_conflicted_target_merge_stops_before_opening_the_pr() {
     let hosting = MockHosting::new();
     let err = finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap_err();
 
-    assert!(err.contains("finish/release-1.1.0-into-main") && err.contains("git merge --abort"), "got: {err}");
+    assert!(err.contains("landing/release-1.1.0-into-main") && err.contains("git merge --abort"), "got: {err}");
     assert!(err.contains("git switch release/1.1.0"), "recovery must name the way back to the source; got: {err}");
     assert!(!hosting.calls().iter().any(|c| c.starts_with("create_or_get_pr")),
         "no PR while the merge is unresolved; hosting calls: {:?}", hosting.calls());
-    assert!(!git.calls().contains(&"push:finish/release-1.1.0-into-main".to_string()),
+    assert!(!git.calls().contains(&"push:landing/release-1.1.0-into-main".to_string()),
         "an unresolved merge must not be pushed; calls: {:?}", git.calls());
 }
 
 #[test]
-fn protected_release_rerun_merges_a_moved_target_into_the_open_finish_branch() {
+fn protected_release_rerun_merges_a_moved_target_into_the_open_landing_branch() {
     // The PR is open and the source is unchanged, but the target moved since —
-    // a re-run merges the target back into the finish branch (healing a PR the
+    // a re-run merges the target back into the landing branch (healing a PR the
     // platform now flags as conflicted) without re-refreshing the source.
     let mut git = MockGit::new();
     git.tags_on_branch = vec!["v1.1.0-rc.2".to_string()];
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.pushed_branches.insert("release/1.1.0".to_string());
-    git.existing_remote_branches.insert("finish/release-1.1.0-into-main".to_string());
-    git.ancestors.insert(("release/1.1.0".to_string(), "origin/finish/release-1.1.0-into-main".to_string()));
-    git.ancestors.insert(("release/1.1.0".to_string(), "finish/release-1.1.0-into-main".to_string()));
-    git.ancestors.insert(("origin/finish/release-1.1.0-into-main".to_string(), "finish/release-1.1.0-into-main".to_string()));
+    git.existing_remote_branches.insert("landing/release-1.1.0-into-main".to_string());
+    git.ancestors.insert(("release/1.1.0".to_string(), "origin/landing/release-1.1.0-into-main".to_string()));
+    git.ancestors.insert(("release/1.1.0".to_string(), "landing/release-1.1.0-into-main".to_string()));
+    git.ancestors.insert(("origin/landing/release-1.1.0-into-main".to_string(), "landing/release-1.1.0-into-main".to_string()));
 
     let hosting = MockHosting::new();
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"merge:origin/main:chore: merge main into finish/release-1.1.0-into-main".to_string()),
+    assert!(calls.contains(&"merge:origin/main:chore: merge main into landing/release-1.1.0-into-main".to_string()),
         "a moved target is merged back in on re-run; calls: {calls:?}");
     assert!(!calls.iter().any(|c| c.starts_with("merge:release/1.1.0:")),
         "an unchanged source needs no refresh; calls: {calls:?}");
-    assert!(calls.contains(&"push:finish/release-1.1.0-into-main".to_string()), "calls: {calls:?}");
+    assert!(calls.contains(&"push:landing/release-1.1.0-into-main".to_string()), "calls: {calls:?}");
 }
 
 #[test]
@@ -1609,7 +1609,7 @@ fn protected_release_refuses_an_open_legacy_pr() {
 }
 
 #[test]
-fn protected_release_tags_the_finish_prs_merge_commit() {
+fn protected_release_tags_the_landing_prs_merge_commit() {
     let mut git = MockGit::new();
     git.branch_shas.insert("release/1.1.0".to_string(), "relsha".to_string());
     git.existing_remote_branches.insert("release/1.1.0".to_string());
@@ -1617,7 +1617,7 @@ fn protected_release_tags_the_finish_prs_merge_commit() {
     git.ancestors.insert(("mcF".to_string(), "origin/main".to_string()));
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("finish/release-1.1.0-into-main".to_string(), "main".to_string()),
+        ("landing/release-1.1.0-into-main".to_string(), "main".to_string()),
         landed("finhead", "mcF"),
     );
     git.parent_counts.insert("mcF".to_string(), 2);
@@ -1626,10 +1626,10 @@ fn protected_release_tags_the_finish_prs_merge_commit() {
 
     let calls = git.calls();
     assert!(calls.contains(&"create_tag_at:v1.1.0:chore: release 1.1.0:mcF".to_string()),
-        "the tag is cut at the finish PR's merge commit; calls: {calls:?}");
+        "the tag is cut at the landing PR's merge commit; calls: {calls:?}");
     let hosting_calls = hosting.calls();
     assert_eq!(hosting_calls[hosting_calls.len() - 3..], [
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
         "copy_text:chore: merge release 1.1.0 into develop\nhttps://github.com/org/repo/pull/1".to_string(),
         "open_url:https://github.com/org/repo/pull/1".to_string(),
     ]);
@@ -1645,11 +1645,11 @@ fn develop_leg_reopens_when_release_gained_commits_after_a_landed_sync() {
     git.branch_shas.insert("release/1.1.0".to_string(), "newsha".to_string());
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.pushed_branches.insert("release/1.1.0".to_string());
-    git.existing_remote_branches.insert("finish/release-1.1.0-into-develop".to_string());
+    git.existing_remote_branches.insert("landing/release-1.1.0-into-develop".to_string());
     git.ancestors.insert(("mc2".to_string(), "origin/develop".to_string()));
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("finish/release-1.1.0-into-develop".to_string(), "develop".to_string()),
+        ("landing/release-1.1.0-into-develop".to_string(), "develop".to_string()),
         landed("oldsha", "mc2"),
     );
     git.parent_counts.insert("mc2".to_string(), 2);
@@ -1657,20 +1657,20 @@ fn develop_leg_reopens_when_release_gained_commits_after_a_landed_sync() {
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(calls.contains(&"merge:release/1.1.0:chore: refresh finish/release-1.1.0-into-develop with release/1.1.0".to_string()),
-        "the finish branch must be refreshed with the new commits; calls: {calls:?}");
+    assert!(calls.contains(&"merge:release/1.1.0:chore: refresh landing/release-1.1.0-into-develop with release/1.1.0".to_string()),
+        "the landing branch must be refreshed with the new commits; calls: {calls:?}");
     assert!(!calls.contains(&"delete_branch_local:release/1.1.0".to_string()),
         "the finish must NOT complete while develop misses commits; calls: {calls:?}");
     let hosting_calls = hosting.calls();
     assert_eq!(hosting_calls[hosting_calls.len() - 3..], [
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
         "copy_text:chore: merge release 1.1.0 into develop\nhttps://github.com/org/repo/pull/1".to_string(),
         "open_url:https://github.com/org/repo/pull/1".to_string(),
     ]);
 }
 
 #[test]
-fn ensure_reuses_a_remote_finish_that_gained_resolution_commits() {
+fn ensure_reuses_a_remote_landing_branch_that_gained_resolution_commits() {
     let mut git = MockGit::new();
     git.existing_tags.insert("v1.1.0".to_string());
     git.tag_commits.insert("v1.1.0".to_string(), "mc1".to_string());
@@ -1678,20 +1678,20 @@ fn ensure_reuses_a_remote_finish_that_gained_resolution_commits() {
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.pushed_branches.insert("release/1.1.0".to_string());
-    git.existing_remote_branches.insert("finish/release-1.1.0-into-develop".to_string());
-    git.ancestors.insert(("release/1.1.0".to_string(), "origin/finish/release-1.1.0-into-develop".to_string()));
-    // A resolution commit is a merge of the target: origin/finish carries develop too.
-    git.ancestors.insert(("origin/develop".to_string(), "origin/finish/release-1.1.0-into-develop".to_string()));
+    git.existing_remote_branches.insert("landing/release-1.1.0-into-develop".to_string());
+    git.ancestors.insert(("release/1.1.0".to_string(), "origin/landing/release-1.1.0-into-develop".to_string()));
+    // A resolution commit is a merge of the target: origin/landing carries develop too.
+    git.ancestors.insert(("origin/develop".to_string(), "origin/landing/release-1.1.0-into-develop".to_string()));
 
     let hosting = MockHosting::new();
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("push:finish/") || c.starts_with("create_branch_no_checkout:finish/") || c.starts_with("checkout:finish/")),
-        "a remote finish that already contains the tip is reused untouched; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("push:landing/") || c.starts_with("create_branch_no_checkout:landing/") || c.starts_with("checkout:landing/")),
+        "a remote landing branch that already contains the tip is reused untouched; calls: {calls:?}");
     let hosting_calls = hosting.calls();
     assert_eq!(hosting_calls[hosting_calls.len() - 3..], [
-        "create_or_get_pr:finish/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
+        "create_or_get_pr:landing/release-1.1.0-into-develop:develop:chore: merge release 1.1.0 into develop:empty-body".to_string(),
         "copy_text:chore: merge release 1.1.0 into develop\nhttps://github.com/org/repo/pull/1".to_string(),
         "open_url:https://github.com/org/repo/pull/1".to_string(),
     ]);
@@ -1706,11 +1706,11 @@ fn leg_skips_without_a_pr_when_target_already_contains_the_finish() {
     git.pushed_branches.insert("release/1.1.0".to_string());
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
     git.ancestors.insert(("release/1.1.0".to_string(), "origin/develop".to_string()));
-    git.branches_matching_by.insert("finish/release-1.1.0-into-*".to_string(),
-        vec!["finish/release-1.1.0-into-main".to_string()]);
+    git.branches_matching_by.insert("landing/release-1.1.0-into-*".to_string(),
+        vec!["landing/release-1.1.0-into-main".to_string()]);
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("finish/release-1.1.0-into-main".to_string(), "main".to_string()),
+        ("landing/release-1.1.0-into-main".to_string(), "main".to_string()),
         landed("relsha", "mc1"),
     );
     git.parent_counts.insert("mc1".to_string(), 2);
@@ -1721,15 +1721,15 @@ fn leg_skips_without_a_pr_when_target_already_contains_the_finish() {
         "develop already contains the release: no PR; calls: {:?}", hosting.calls());
     let calls = git.calls();
     assert!(calls.contains(&"delete_branch_local:release/1.1.0".to_string()), "calls: {calls:?}");
-    assert!(calls.contains(&"list_branches_matching:finish/release-1.1.0-into-*".to_string()), "calls: {calls:?}");
+    assert!(calls.contains(&"list_branches_matching:landing/release-1.1.0-into-*".to_string()), "calls: {calls:?}");
     let guard_read = calls.iter().position(|c| c == "branch_sha:release/1.1.0").unwrap();
-    let finish_delete = calls.iter().position(|c| c == "local_branch_exists:finish/release-1.1.0-into-main").unwrap();
-    assert!(guard_read < finish_delete, "guard must run before finish branches are deleted; calls: {calls:?}");
+    let landing_delete = calls.iter().position(|c| c == "local_branch_exists:landing/release-1.1.0-into-main").unwrap();
+    assert!(guard_read < landing_delete, "guard must run before landing branches are deleted; calls: {calls:?}");
 }
 
 #[test]
-fn ensure_refreshes_a_local_leftover_finish_branch_without_a_remote() {
-    // A crashed earlier run left a local finish branch that was never pushed;
+fn ensure_refreshes_a_local_leftover_landing_branch_without_a_remote() {
+    // A crashed earlier run left a local landing branch that was never pushed;
     // the release has moved since. The leftover is refreshed by merging the
     // release in (no origin to ff-sync from), then pushed.
     let mut git = MockGit::new();
@@ -1739,30 +1739,30 @@ fn ensure_refreshes_a_local_leftover_finish_branch_without_a_remote() {
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.pushed_branches.insert("release/1.1.0".to_string());
-    git.existing_local_branches.insert("finish/release-1.1.0-into-develop".to_string());
+    git.existing_local_branches.insert("landing/release-1.1.0-into-develop".to_string());
 
     let hosting = MockHosting::new();
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    let tail: Vec<&String> = calls.iter().skip_while(|c| *c != "checkout:finish/release-1.1.0-into-develop").collect();
+    let tail: Vec<&String> = calls.iter().skip_while(|c| *c != "checkout:landing/release-1.1.0-into-develop").collect();
     assert_eq!(tail, vec![
-        "checkout:finish/release-1.1.0-into-develop",
-        "merge:release/1.1.0:chore: refresh finish/release-1.1.0-into-develop with release/1.1.0",
+        "checkout:landing/release-1.1.0-into-develop",
+        "merge:release/1.1.0:chore: refresh landing/release-1.1.0-into-develop with release/1.1.0",
         "checkout:develop",
-        "is_ancestor:origin/develop:finish/release-1.1.0-into-develop",
+        "is_ancestor:origin/develop:landing/release-1.1.0-into-develop",
         "current_branch",
-        "checkout:finish/release-1.1.0-into-develop",
-        "merge:origin/develop:chore: merge develop into finish/release-1.1.0-into-develop",
+        "checkout:landing/release-1.1.0-into-develop",
+        "merge:origin/develop:chore: merge develop into landing/release-1.1.0-into-develop",
         "checkout:develop",
-        "push:finish/release-1.1.0-into-develop",
+        "push:landing/release-1.1.0-into-develop",
     ], "no origin to ff-sync from; calls: {calls:?}");
-    assert!(!calls.contains(&"ff_merge:origin/finish/release-1.1.0-into-develop".to_string()), "calls: {calls:?}");
+    assert!(!calls.contains(&"ff_merge:origin/landing/release-1.1.0-into-develop".to_string()), "calls: {calls:?}");
 }
 
 #[test]
-fn ensure_pushes_a_local_finish_that_contains_the_tip_but_never_reached_origin() {
-    // Crashed between refresh and push: the local finish already contains the
+fn ensure_pushes_a_local_landing_branch_that_contains_the_tip_but_never_reached_origin() {
+    // Crashed between refresh and push: the local landing branch already contains the
     // tip and origin is strictly behind — nothing to refresh, just push.
     let mut git = MockGit::new();
     git.existing_tags.insert("v1.1.0".to_string());
@@ -1771,19 +1771,19 @@ fn ensure_pushes_a_local_finish_that_contains_the_tip_but_never_reached_origin()
     git.ancestors.insert(("mc1".to_string(), "origin/main".to_string()));
     git.existing_remote_branches.insert("release/1.1.0".to_string());
     git.pushed_branches.insert("release/1.1.0".to_string());
-    git.existing_local_branches.insert("finish/release-1.1.0-into-develop".to_string());
-    git.existing_remote_branches.insert("finish/release-1.1.0-into-develop".to_string());
-    git.ancestors.insert(("release/1.1.0".to_string(), "finish/release-1.1.0-into-develop".to_string()));
-    git.ancestors.insert(("origin/finish/release-1.1.0-into-develop".to_string(), "finish/release-1.1.0-into-develop".to_string()));
+    git.existing_local_branches.insert("landing/release-1.1.0-into-develop".to_string());
+    git.existing_remote_branches.insert("landing/release-1.1.0-into-develop".to_string());
+    git.ancestors.insert(("release/1.1.0".to_string(), "landing/release-1.1.0-into-develop".to_string()));
+    git.ancestors.insert(("origin/landing/release-1.1.0-into-develop".to_string(), "landing/release-1.1.0-into-develop".to_string()));
     // The crash happened after both merges: the target is already in too.
-    git.ancestors.insert(("origin/develop".to_string(), "finish/release-1.1.0-into-develop".to_string()));
+    git.ancestors.insert(("origin/develop".to_string(), "landing/release-1.1.0-into-develop".to_string()));
 
     let hosting = MockHosting::new();
     finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
 
     let calls = git.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("checkout:finish/")), "nothing to refresh; calls: {calls:?}");
-    assert!(calls.contains(&"push:finish/release-1.1.0-into-develop".to_string()), "the push must be retried; calls: {calls:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("checkout:landing/")), "nothing to refresh; calls: {calls:?}");
+    assert!(calls.contains(&"push:landing/release-1.1.0-into-develop".to_string()), "the push must be retried; calls: {calls:?}");
 }
 
 #[test]
@@ -1852,11 +1852,11 @@ fn a_release_without_a_staging_tag_stops_before_mutation() {
 }
 
 #[test]
-fn refreshing_a_finish_branch_conflict_preserves_the_source_and_stops_publication() {
+fn refreshing_a_landing_branch_conflict_preserves_the_source_and_stops_publication() {
     let mut git = MockGit::new();
     git.tags_on_branch = vec!["v1.2.0-rc.1".into()];
     git.existing_local_branches
-        .insert("finish/release-1.2.0-into-main".into());
+        .insert("landing/release-1.2.0-into-main".into());
     git.fail_nth_merge = Some(1);
     let hosting = MockHosting::new();
     let cfg = RepoConfig {
@@ -1873,7 +1873,7 @@ fn refreshing_a_finish_branch_conflict_preserves_the_source_and_stops_publicatio
     assert!(error.contains("gflow finish"), "{error}");
     assert_eq!(
         git.calls().last().unwrap(),
-        "merge:release/1.2.0:chore: refresh finish/release-1.2.0-into-main with release/1.2.0"
+        "merge:release/1.2.0:chore: refresh landing/release-1.2.0-into-main with release/1.2.0"
     );
     assert!(!hosting
         .calls()
@@ -1884,7 +1884,7 @@ fn refreshing_a_finish_branch_conflict_preserves_the_source_and_stops_publicatio
         .iter()
         .any(|call| call.starts_with("delete_branch_local:")
             || call.starts_with("delete_remote_branches:")
-            || call.starts_with("push:finish/")));
+            || call.starts_with("push:landing/")));
 }
 
 #[test]
@@ -1910,7 +1910,7 @@ fn a_landing_pr_uses_its_explicit_template() {
     .unwrap();
 
     assert!(hosting.calls().iter().any(|call| call ==
-        "create_or_get_pr:finish/release-1.2.0-into-main:main:chore: merge release 1.2.0 into main:template=landing.md"),
+        "create_or_get_pr:landing/release-1.2.0-into-main:main:chore: merge release 1.2.0 into main:template=landing.md"),
         "{:?}", hosting.calls());
 }
 
@@ -2314,7 +2314,7 @@ fn protected_release_stops_after_failed_main_pr_creation() {
             git.existing_tags.insert("v1.1.0".into());
         }
         let mut hosting = MockHosting::new();
-        let call = "create_or_get_pr:finish/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body";
+        let call = "create_or_get_pr:landing/release-1.1.0-into-main:main:chore: merge release 1.1.0 into main:empty-body";
         hosting.fail_call = Some((call.into(), 1));
         assert_hosting_failure(
             finish_release(
@@ -2345,7 +2345,7 @@ fn protected_release_stops_after_failed_landed_finish_step() {
             ("branch_sha:release/1.1.0", 1),
             ("branch_sha:release/1.1.0", 2),
             ("branch_sha:release/1.1.0", 3),
-            ("list_branches_matching:finish/release-1.1.0-into-*", 1),
+            ("list_branches_matching:landing/release-1.1.0-into-*", 1),
         ];
         if strategy == BumpStrategy::Rc {
             failures.push(("tag_exists:v1.1.0", 1));

@@ -124,7 +124,7 @@ fn release_chore_pr_template_keys() {
 }
 
 #[test]
-fn finish_branches_parse_as_other() {
-    assert_eq!(BranchType::parse("finish/release-1.2.0-into-main"), BranchType::Other);
-    assert_eq!(BranchType::parse("finish/hotfix-1.1.1-into-release-1.2.0"), BranchType::Other);
+fn landing_branches_parse_as_other() {
+    assert_eq!(BranchType::parse("landing/release-1.2.0-into-main"), BranchType::Other);
+    assert_eq!(BranchType::parse("landing/hotfix-1.1.1-into-release-1.2.0"), BranchType::Other);
 }

@@ -72,10 +72,10 @@ fn an_empty_body_pr_never_carries_a_body_file() {
     // (no flag at all would drop gh into its interactive editor).
     let runner = MockCliRunner::scripted(&[Ok(""), Ok("https://github.com/o/r/pull/8")]);
 
-    gh(&runner).create_or_get_pr("finish/hotfix-1.1.1-into-main", "main", "chore: merge hotfix 1.1.1 into main", PrBody::Empty).unwrap();
+    gh(&runner).create_or_get_pr("landing/hotfix-1.1.1-into-main", "main", "chore: merge hotfix 1.1.1 into main", PrBody::Empty).unwrap();
 
     assert_eq!(runner.calls()[1],
-        "gh pr create --head finish/hotfix-1.1.1-into-main --base main --title chore: merge hotfix 1.1.1 into main --body ");
+        "gh pr create --head landing/hotfix-1.1.1-into-main --base main --title chore: merge hotfix 1.1.1 into main --body ");
 }
 
 #[test]
@@ -296,11 +296,11 @@ fn ado_lookups_into_one_target_share_one_list_query() {
     // One az call costs seconds; a protected landing asks about the same
     // target up to five times per run.
     let runner = az_scripted(&[Ok("active\trefs/heads/release/1.0.0\trefs/heads/main\taaa\t\t61\n\
-completed\trefs/heads/finish/release-1.0.0-into-main\trefs/heads/main\tbbb\tccc\t60")]);
+completed\trefs/heads/landing/release-1.0.0-into-main\trefs/heads/main\tbbb\tccc\t60")]);
     let ado = ado(&runner);
 
     let open = ado.open_pr_to("release/1.0.0", "main").unwrap().unwrap();
-    let landed = ado.merged_pr_to("finish/release-1.0.0-into-main", "main").unwrap().unwrap();
+    let landed = ado.merged_pr_to("landing/release-1.0.0-into-main", "main").unwrap().unwrap();
     let legacy = ado.merged_pr_to("release/1.0.0", "main").unwrap();
 
     assert!(open.ends_with("/pullrequest/61"), "got: {open}");
@@ -481,7 +481,7 @@ fn a_failed_az_call_names_the_login_commands() {
     assert!(err.contains("az login") && err.contains("az devops login"), "must name the next command; got: {err}");
 }
 
-// --- open_pr_to (legacy-PR detection for finish-branch migration) ---
+// --- open_pr_to (legacy-PR detection for landing-branch migration) ---
 
 #[test]
 fn gh_open_pr_to_filters_by_exact_head_base_and_open_state() {

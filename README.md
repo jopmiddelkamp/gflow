@@ -283,7 +283,7 @@ a hard-to-miss banner next to the PR URL saying which one:
 - **Work and fix PRs** (feature/fix/chore/docs/refactor, `release-fix`,
   `hotfix-fix`, `release-chore`, version PRs) → **Squash**. One commit per
   change lands on the target.
-- **Protected-mode landing PRs** (`finish/*` into `main`/`develop`/`release/*`)
+- **Protected-mode landing PRs** (`landing/*` into `main`/`develop`/`release/*`)
   → **Merge commit**. The merge keeps history connected, which the finish
   flows rely on.
 
@@ -667,12 +667,12 @@ One consequence to plan for: under `patch` every tag is a clean `vX.Y.Z` — the
 Use `mode=protected` when `main`/`develop` require pull requests (branch protection, required reviews). In this mode:
 
 - **gflow never merges a PR.** Every landing that would otherwise be a direct push instead opens (or reuses) a PR and prints its URL.
-- **Every landing PR's head is a throwaway `finish/*` branch** cut from the source — `finish/release-1.2.0-into-main`, `finish/hotfix-1.1.1-into-release-1.2.0`, and so on. The release/hotfix branch itself is never a PR head, so nothing (a conflict resolution, the platform's auto-delete-head-branches setting) can ever touch it. gflow creates, refreshes, and deletes these branches itself; a landing that predates newer source commits is re-opened with a refreshed finish branch, so no commit can silently miss a target.
+- **Every landing PR's head is a throwaway `landing/*` branch** cut from the source — `landing/release-1.2.0-into-main`, `landing/hotfix-1.1.1-into-release-1.2.0`, and so on. The release/hotfix branch itself is never a PR head, so nothing (a conflict resolution, the platform's auto-delete-head-branches setting) can ever touch it. gflow creates, refreshes, and deletes these branches itself; a landing that predates newer source commits is re-opened with a refreshed landing branch, so no commit can silently miss a target.
 - `finish`, `bump`, and `sync` **exit 0** with the PR pending — nothing is left half-done, there's just a human step in between. Re-run the same command after the PR is merged; it continues from there.
-- Landings happen **one PR per run**, in order (`main`, then `develop`, then — for hotfixes — each open `release/*` branch). Only the **last** landing deletes the source branch (and every `finish/*` branch, orphans included) — unless `keep-release-branches=true`, or its tip provably landed nowhere, in which case gflow keeps the branch and tells you how to remove it yourself.
+- Landings happen **one PR per run**, in order (`main`, then `develop`, then — for hotfixes — each open `release/*` branch). Only the **last** landing deletes the source branch (and every `landing/*` branch, orphans included) — unless `keep-release-branches=true`, or its tip provably landed nowhere, in which case gflow keeps the branch and tells you how to remove it yourself.
 - Progress is never stored on disk for a protected finish — there's nothing to resume, because it never merged locally. Each run re-derives what's landed from the hosting platform's PR state and from tags.
-- **Landing PRs are born mergeable.** Before opening (or refreshing) a landing PR, gflow merges the target into the finish branch itself. A conflict — e.g. on the version file, see [Version-file merge-conflict papercut](#version-file-merge-conflict-papercut) — therefore surfaces immediately in your terminal, mid-run, and gflow announces that **your current worktree is now on the finish branch**, mid-merge. Resolve the conflicts right there, `git add . && git commit --no-edit`, and re-run — the re-run switches the worktree back to the source branch itself, pushes the resolution, and opens the PR conflict-free (`git merge --abort && git switch <source>` backs out instead). A PR that turns conflicted *later* because the target moved is healed the same way — just re-run. The release/hotfix branch is never touched by a resolution, and the finish branch is never rebased.
-- **Upgrading with a landing in flight?** An open landing PR whose head is the release/hotfix branch itself (opened by an older gflow) is a hard error naming it: merge it and re-run, or close/abandon it and re-run — gflow then reopens it from a finish branch. Already-merged old-style legs are recognized as landed.
+- **Landing PRs are born mergeable.** Before opening (or refreshing) a landing PR, gflow merges the target into the landing branch itself. A conflict — e.g. on the version file, see [Version-file merge-conflict papercut](#version-file-merge-conflict-papercut) — therefore surfaces immediately in your terminal, mid-run, and gflow announces that **your current worktree is now on the landing branch**, mid-merge. Resolve the conflicts right there, `git add . && git commit --no-edit`, and re-run — the re-run switches the worktree back to the source branch itself, pushes the resolution, and opens the PR conflict-free (`git merge --abort && git switch <source>` backs out instead). A PR that turns conflicted *later* because the target moved is healed the same way — just re-run. The release/hotfix branch is never touched by a resolution, and the landing branch is never rebased.
+- **Upgrading with a landing in flight?** An open landing PR whose head is the release/hotfix branch itself (opened by an older gflow) is a hard error naming it: merge it and re-run, or close/abandon it and re-run — gflow then reopens it from a landing branch. Already-merged old-style legs are recognized as landed. Landing branches used to be named `finish/*`; gflow no longer recognizes those, so land a release or hotfix that is mid-landing with the gflow version that started it, then delete any leftover `finish/*` branches (`git push origin --delete <branch>`).
 - That's different from deliberately adding *new*, unrelated work to a release branch after its `main` PR has merged — don't do that; the clean tag is already placed there. Ship further fixes as a hotfix instead. If you do, gflow says so rather than letting it pass unnoticed:
 
 ```
@@ -694,7 +694,7 @@ https://github.com/org/repo/pull/42
 Waiting for a human to merge this PR.
 Re-run 'gflow finish' to continue after the merge.
 
-Conflicts later (main moved)? Just re-run — gflow merges `main` into `finish/release-2.6.0-into-main` in this worktree and stops there for you to resolve locally if needed.
+Conflicts later (main moved)? Just re-run — gflow merges `main` into `landing/release-2.6.0-into-main` in this worktree and stops there for you to resolve locally if needed.
 
   ... a human merges pull/42 on GitHub ...
 
@@ -708,7 +708,7 @@ https://github.com/org/repo/pull/43
 Waiting for a human to merge this PR.
 Re-run 'gflow finish' to continue after the merge.
 
-Conflicts later (develop moved)? Just re-run — gflow merges `develop` into `finish/release-2.6.0-into-develop` in this worktree and stops there for you to resolve locally if needed.
+Conflicts later (develop moved)? Just re-run — gflow merges `develop` into `landing/release-2.6.0-into-develop` in this worktree and stops there for you to resolve locally if needed.
 
   ... a human merges pull/43 ...
 
@@ -777,7 +777,7 @@ Re-running `gflow bump` after that PR merges tags the **PR's merge commit** dire
 
 #### Version-file merge-conflict papercut
 
-Because `develop` and an open hotfix or release branch can carry different versions in their tracked files, merging one into the other can conflict on the version line — e.g. a hotfix's `1.2.1` against develop's already-bumped `1.3.0`, or a major release's `2.0.0` merging back into `develop`. Free mode surfaces this as an ordinary resumable merge conflict (resolve it, `git commit`, re-run `gflow finish`); protected mode surfaces it while merging the target into the `finish/*` branch — resolve it there mid-run, commit, and re-run. gflow does not auto-resolve version-file conflicts — it has no way to know which lines the script owns.
+Because `develop` and an open hotfix or release branch can carry different versions in their tracked files, merging one into the other can conflict on the version line — e.g. a hotfix's `1.2.1` against develop's already-bumped `1.3.0`, or a major release's `2.0.0` merging back into `develop`. Free mode surfaces this as an ordinary resumable merge conflict (resolve it, `git commit`, re-run `gflow finish`); protected mode surfaces it while merging the target into the `landing/*` branch — resolve it there mid-run, commit, and re-run. gflow does not auto-resolve version-file conflicts — it has no way to know which lines the script owns.
 
 #### Hotfix branches created without checkout
 
