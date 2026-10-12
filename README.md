@@ -371,6 +371,7 @@ gflow worktree enable                 # turn the flow on
 gflow worktree editor cursor          # code (default) | cursor | windsurf | zed | pycharm | none | any command
 gflow worktree path ~/worktrees       # where worktree folders go (default: the repo's parent)
 gflow worktree status                 # show the current settings (all layers merged)
+gflow worktree setup                  # re-run the setup commands in this worktree (see below)
 gflow worktree disable                # turn it off
 
 gflow worktree enable --repo          # ... in this repository's committed config
@@ -446,6 +447,14 @@ works here works for the other tools reading it. A file gflow cannot parse is
 reported as a warning naming the file and the byte offset (a trailing comma is
 called out as such), the setup commands are skipped, and the command you ran
 carries on: a typo in `worktrees.json` never blocks gflow.
+
+To run the setup commands again — after editing the file, or in a worktree you
+created yourself — run `gflow worktree setup` inside that linked worktree. It
+reads the file from the worktree you stand in, works whether or not the worktree
+flow is enabled, and refuses in the main checkout (where `$ROOT_WORKTREE_PATH`
+would point at the same directory). Unlike during a start, a missing or
+unparsable file is an error, and so is any failing command: every command still
+runs, then gflow exits non-zero.
 
 ```json
 {

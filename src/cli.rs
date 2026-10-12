@@ -72,6 +72,8 @@ pub enum WorktreeAction {
     },
     /// Show the current worktree configuration
     Status,
+    /// Re-run the repo's worktrees.json setup commands in the linked worktree you stand in
+    Setup,
 }
 
 #[derive(Args, Debug, Clone, Default)]

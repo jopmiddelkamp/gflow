@@ -745,3 +745,102 @@ fn open_worktree_runs_nothing_without_a_setup_file() {
     assert!(setup.calls().is_empty());
     assert_eq!(editor.calls().len(), 1);
 }
+
+// --- `gflow worktree setup` ---
+
+fn linked_worktree(setup_file: Option<&str>) -> (common::TempDir, MockGit) {
+    let dir = common::tmp_dir("gflow-setup-here");
+    if let Some(json) = setup_file {
+        fs::write(dir.join("worktrees.json"), json).unwrap();
+    }
+    let mut git = MockGit::new();
+    git.worktree_root = dir.to_path_buf();
+    (dir, git)
+}
+
+#[test]
+fn setup_reruns_the_commands_in_the_linked_worktree_you_stand_in() {
+    let (dir, git) = linked_worktree(Some(r#"["fvm use", "dart pub get"]"#));
+    let setup = MockWorktreeSetup::new();
+
+    worktree::run_setup_here(&git, &setup).unwrap();
+
+    let wt = dir.display();
+    assert_eq!(setup.calls(), vec![
+        format!("run:{wt}:/repos/beans-gitflow:fvm use"),
+        format!("run:{wt}:/repos/beans-gitflow:dart pub get"),
+    ]);
+}
+
+#[test]
+fn setup_refuses_in_the_main_worktree() {
+    let git = MockGit::new();
+    let setup = MockWorktreeSetup::new();
+
+    let err = worktree::run_setup_here(&git, &setup).unwrap_err();
+
+    assert!(err.contains("linked worktree"), "{err}");
+    assert!(setup.calls().is_empty());
+}
+
+#[test]
+fn setup_runs_every_command_and_fails_when_one_failed() {
+    let (_dir, git) = linked_worktree(Some(r#"["fvm use", "dart pub get"]"#));
+    let mut setup = MockWorktreeSetup::new();
+    setup.fail.insert("fvm use".to_string());
+
+    let err = worktree::run_setup_here(&git, &setup).unwrap_err();
+
+    assert_eq!(setup.calls().len(), 2, "a failing command does not stop the rest");
+    assert!(err.contains("1 of 2"), "{err}");
+}
+
+#[test]
+fn setup_without_a_setup_file_names_both_files() {
+    let (_dir, git) = linked_worktree(None);
+    let setup = MockWorktreeSetup::new();
+
+    let err = worktree::run_setup_here(&git, &setup).unwrap_err();
+
+    assert!(err.contains(".cursor/worktrees.json") && err.contains("worktrees.json"), "{err}");
+    assert!(setup.calls().is_empty());
+}
+
+#[test]
+fn setup_reports_an_unparsable_setup_file_instead_of_skipping_it() {
+    let (_dir, git) = linked_worktree(Some(r#"["fvm use",]"#));
+    let setup = MockWorktreeSetup::new();
+
+    let err = worktree::run_setup_here(&git, &setup).unwrap_err();
+
+    assert!(err.contains("trailing comma"), "{err}");
+    assert!(setup.calls().is_empty());
+}
+
+#[test]
+fn setup_outside_a_repository_says_so() {
+    let mut git = MockGit::new();
+    git.fail_call = Some(("worktree_root".to_string(), 1));
+
+    let err = worktree::run_setup_here(&git, &MockWorktreeSetup::new()).unwrap_err();
+
+    assert_eq!(err, "Not in a git repository.");
+}
+
+#[test]
+fn setup_stops_when_the_main_worktree_cannot_be_found() {
+    let (_dir, mut git) = linked_worktree(Some(r#"["fvm use"]"#));
+    git.fail_call = Some(("repo_root".to_string(), 1));
+    let setup = MockWorktreeSetup::new();
+
+    let err = worktree::run_setup_here(&git, &setup).unwrap_err();
+
+    assert_eq!(err, "injected git failure: repo_root");
+    assert!(setup.calls().is_empty());
+}
+
+#[test]
+#[should_panic(expected = "worktree setup is dispatched in main()")]
+fn config_dispatch_rejects_setup() {
+    let _ = worktree::run_config(&MockPrompter::new(), None, None, Some(WorktreeAction::Setup), ConfigScope::Global);
+}

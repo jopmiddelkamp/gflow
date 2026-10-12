@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::editor::Editor;
-use crate::worktree_setup::{SetupCommands, WorktreeSetup};
+use crate::worktree_setup::{self, SetupCommands, WorktreeSetup};
 use crate::git::{Git, Result};
 use crate::prompt::Prompter;
 use crate::repo_config::{self, Settings};
@@ -155,7 +155,7 @@ pub fn open_worktree(git: &dyn Git, ctx: &WorktreeContext<'_>, branch: &str) -> 
     git.add_worktree(&path, branch)?;
 
     if let Some(cmds) = ctx.env.commands {
-        run_setup(ctx, &repo_root, &path, cmds);
+        run_setup(ctx.env.setup, &repo_root, &path, cmds);
     }
 
     if !editor_disabled(&config.editor) {
@@ -169,20 +169,46 @@ pub fn open_worktree(git: &dyn Git, ctx: &WorktreeContext<'_>, branch: &str) -> 
     Ok(())
 }
 
-/// Run the repo's `worktrees.json` commands inside the new worktree. Never
-/// fails the start: a failing command is reported and the rest still run
-/// (worktree-cli's policy) — the branch is already pushed by now.
-fn run_setup(ctx: &WorktreeContext<'_>, main_root: &Path, worktree: &Path, cmds: &SetupCommands) {
+/// Run the repo's `worktrees.json` commands inside `worktree` and return how
+/// many succeeded. A failing command is reported and the rest still run
+/// (worktree-cli's policy); whether a failure fails the run is the caller's call.
+fn run_setup(setup: &dyn WorktreeSetup, main_root: &Path, worktree: &Path, cmds: &SetupCommands) -> usize {
     println!("Running {} setup command(s) from {}", cmds.commands.len(), cmds.file.display());
     let mut ok = 0;
     for command in &cmds.commands {
         println!("Running: {command}");
-        match ctx.env.setup.run_command(worktree, main_root, command) {
+        match setup.run_command(worktree, main_root, command) {
             Ok(()) => ok += 1,
             Err(e) => eprintln!("Setup command failed: {command} — {e}"),
         }
     }
     println!("Setup commands completed ({ok}/{} succeeded).", cmds.commands.len());
+    ok
+}
+
+/// `gflow worktree setup`: re-run the setup commands in the linked worktree you
+/// stand in. Unlike a start, nothing else succeeded first, so a failing command
+/// fails the run. The main worktree is refused: `$ROOT_WORKTREE_PATH` would point
+/// at the tree the commands run in (`cp "$ROOT_WORKTREE_PATH/.env" .env`).
+pub fn run_setup_here(git: &dyn Git, setup: &dyn WorktreeSetup) -> Result<()> {
+    let worktree = git.worktree_root().map_err(|_| "Not in a git repository.".to_string())?;
+    let main_root = git.repo_root()?;
+    if worktree == main_root {
+        return Err("Setup commands run in a linked worktree, and this is the main one. Run 'gflow worktree setup' inside the worktree to set up.".to_string());
+    }
+    let cmds = worktree_setup::load(&worktree)?.ok_or_else(|| {
+        format!(
+            "No setup commands found: add {} or {} to this worktree.",
+            worktree_setup::CURSOR_FILE,
+            worktree_setup::GENERIC_FILE,
+        )
+    })?;
+    let ok = run_setup(setup, &main_root, &worktree, &cmds);
+    let failed = cmds.commands.len() - ok;
+    if failed > 0 {
+        return Err(format!("{failed} of {} setup command(s) failed.", cmds.commands.len()));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +249,7 @@ pub fn run_config(
             show_status(&WorktreeConfig::from_settings(&layers.settings));
             Ok(())
         }
+        Some(WorktreeAction::Setup) => unreachable!("worktree setup is dispatched in main()"),
     }
 }
 

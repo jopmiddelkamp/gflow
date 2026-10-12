@@ -70,6 +70,7 @@ gflow worktree enable | disable
 gflow worktree editor <cmd>        # code | cursor | windsurf | zed | pycharm | none | any command
 gflow worktree path <dir>
 gflow worktree status
+gflow worktree setup               # re-run worktrees.json in this linked worktree; refused in the main checkout; any failure → non-zero exit
 ```
 
 ### Finish current branch

@@ -2,7 +2,7 @@ use std::process::{Command, ExitCode};
 
 use clap::Parser;
 
-use gflow::cli::Commands;
+use gflow::cli::{Commands, WorktreeAction};
 use gflow::git::{GitCli, SystemRunner};
 use gflow::git::Git;
 use gflow::hosting::detect::{self, Provider};
@@ -49,10 +49,13 @@ fn run(command: Option<Commands>) -> Result<(), String> {
     let migration_root = root.as_ref().ok().cloned();
     repo_config::migrate_git_config(&git, home.as_deref(), migration_root.as_deref())?;
 
-    // `gflow worktree` only reads/writes config files — no gh, auth, fetch, or
-    // branch context needed. Dispatch it here and return before the branch-flow
+    // `gflow worktree` only reads/writes config files or runs the repo's setup
+    // commands — no gh, auth, fetch, or branch context needed. Dispatch it here and return before the branch-flow
     // machinery.
     let command = match command {
+        Some(Commands::Worktree { action: Some(WorktreeAction::Setup), .. }) => {
+            return worktree::run_setup_here(&git, &ShellSetup);
+        }
         Some(Commands::Worktree { action, repo, local }) => {
             return worktree::run_config(
                 &MenuPrompter,
