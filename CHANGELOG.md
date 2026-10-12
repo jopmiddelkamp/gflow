@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-10-12
+
+### Added
+- `gflow worktree setup` runs the repo's `.cursor/worktrees.json` / `worktrees.json` setup commands again in the linked worktree you are in. Use it after editing the file, or in a worktree you created yourself. It works whether or not the worktree flow is enabled, and refuses in the main checkout, where `$ROOT_WORKTREE_PATH` would point at the same folder. Every command runs; if any fails, or the file is missing or invalid, gflow exits non-zero.
+
+### Changed
+- **Breaking:** protected-mode landing branches are now named `landing/<source>-into-<target>` instead of `finish/<source>-into-<target>`. gflow no longer recognizes `finish/*` branches. Land any in-flight protected release or hotfix with the gflow version that started it before upgrading, then delete leftover `finish/*` branches on origin. CI triggers or branch policies that match `finish/*` must change to `landing/*`.
+
 ## [4.6.0] - 2026-10-08
 
 ### Changed
@@ -280,6 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[5.0.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.6.0...v5.0.0
 [4.6.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.5.0...v4.6.0
 [4.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.3.1...v4.4.0

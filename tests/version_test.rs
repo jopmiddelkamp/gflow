@@ -210,20 +210,20 @@ fn a_clean_release_outranks_its_own_release_candidates() {
 }
 
 #[test]
-fn finish_branch_names_flatten_slashes() {
-    use gflow::version::finish_branch_name;
-    assert_eq!(finish_branch_name("release/1.2.0", "main"), "finish/release-1.2.0-into-main");
-    assert_eq!(finish_branch_name("release/1.2.0", "develop"), "finish/release-1.2.0-into-develop");
-    assert_eq!(finish_branch_name("hotfix/1.1.1", "main"), "finish/hotfix-1.1.1-into-main");
-    assert_eq!(finish_branch_name("hotfix/1.1.1", "develop"), "finish/hotfix-1.1.1-into-develop");
-    assert_eq!(finish_branch_name("hotfix/1.1.1", "release/1.2.0"), "finish/hotfix-1.1.1-into-release-1.2.0");
+fn landing_branch_names_flatten_slashes() {
+    use gflow::version::landing_branch_name;
+    assert_eq!(landing_branch_name("release/1.2.0", "main"), "landing/release-1.2.0-into-main");
+    assert_eq!(landing_branch_name("release/1.2.0", "develop"), "landing/release-1.2.0-into-develop");
+    assert_eq!(landing_branch_name("hotfix/1.1.1", "main"), "landing/hotfix-1.1.1-into-main");
+    assert_eq!(landing_branch_name("hotfix/1.1.1", "develop"), "landing/hotfix-1.1.1-into-develop");
+    assert_eq!(landing_branch_name("hotfix/1.1.1", "release/1.2.0"), "landing/hotfix-1.1.1-into-release-1.2.0");
 }
 
 #[test]
-fn finish_branch_source_round_trips_every_produced_name() {
-    use gflow::version::{finish_branch_name, finish_branch_source};
-    // Finish branches are only ever built from release/hotfix sources
-    // (ensure_finish_branch callers); the parser recovers exactly those.
+fn landing_branch_source_round_trips_every_produced_name() {
+    use gflow::version::{landing_branch_name, landing_branch_source};
+    // Landing branches are only ever built from release/hotfix sources
+    // (ensure_landing_branch callers); the parser recovers exactly those.
     for (source, target) in [
         ("release/1.2.0", "main"),
         ("release/1.2.0", "develop"),
@@ -231,20 +231,20 @@ fn finish_branch_source_round_trips_every_produced_name() {
         ("hotfix/1.1.1", "develop"),
         ("hotfix/1.1.1", "release/1.2.0"),
     ] {
-        let finish = finish_branch_name(source, target);
-        assert_eq!(finish_branch_source(&finish), Some(source.to_string()), "for {finish}");
+        let landing = landing_branch_name(source, target);
+        assert_eq!(landing_branch_source(&landing), Some(source.to_string()), "for {landing}");
     }
 }
 
 #[test]
-fn finish_branch_source_rejects_non_finish_names() {
-    use gflow::version::finish_branch_source;
-    assert_eq!(finish_branch_source("release/1.2.0"), None);
-    assert_eq!(finish_branch_source("develop"), None);
-    assert_eq!(finish_branch_source("finish/feature-x-into-develop"), None);
-    assert_eq!(finish_branch_source("finish/release-notaversion-into-main"), None);
-    assert_eq!(finish_branch_source("finish/release-1.2.0"), None);
-    assert_eq!(finish_branch_source("finish/release-1.2.0-into-"), None);
+fn landing_branch_source_rejects_non_landing_names() {
+    use gflow::version::landing_branch_source;
+    assert_eq!(landing_branch_source("release/1.2.0"), None);
+    assert_eq!(landing_branch_source("develop"), None);
+    assert_eq!(landing_branch_source("landing/feature-x-into-develop"), None);
+    assert_eq!(landing_branch_source("landing/release-notaversion-into-main"), None);
+    assert_eq!(landing_branch_source("landing/release-1.2.0"), None);
+    assert_eq!(landing_branch_source("landing/release-1.2.0-into-"), None);
 }
 
 struct LimitedOutput {

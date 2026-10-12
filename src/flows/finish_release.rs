@@ -1,15 +1,15 @@
 use std::path::Path;
 
 use crate::flows::{
-    announce_pending_landing, announce_version_pr, cleanup_finish_branches, delete_branches_guarded, delete_source_branch, ensure_finish_branch,
-    finish_conflict_hint, finish_leg_landed, land_leg_strict, landing_pr_body, leg_landed, merge_where_checked_out, refuse_open_legacy_pr, LegState,
+    announce_pending_landing, announce_version_pr, cleanup_landing_branches, delete_branches_guarded, delete_source_branch, ensure_landing_branch,
+    landing_conflict_hint, finish_leg_landed, land_leg_strict, landing_pr_body, leg_landed, merge_where_checked_out, refuse_open_legacy_pr, LegState,
     merge_into, push_if_needed, push_tag_if_missing, report_commits_past_landing, require_clean_tree,
     resume_hint, run_version_script, tag_at_if_missing, tag_if_missing, tip_landed_somewhere,
 };
 use crate::git::Git;
 use crate::hosting::{HostingPlatform, LandedPr, PrBody};
 use crate::repo_config::{BumpStrategy, Mode, RepoConfig};
-use crate::version::{finish_branch_name, SemVer};
+use crate::version::{landing_branch_name, SemVer};
 use crate::version_script::VersionScript;
 
 const NO_RC_TAG_ERROR: &str = "No RC tag found on this release branch. Run 'gflow bump' first.";
@@ -248,10 +248,10 @@ pub fn sync_with_develop(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &Rep
 }
 
 /// Protected mode: gflow never merges into develop itself, so sync opens a
-/// landing PR from the develop finish branch and stops for a human to merge.
+/// landing PR from the develop landing branch and stops for a human to merge.
 /// The strict landed-check is what keeps a stale merged landing from being
 /// trusted as "already synced" — a release with new commits since that merge
-/// re-enters this same PR-opening path with a refreshed finish branch.
+/// re-enters this same PR-opening path with a refreshed landing branch.
 fn sync_with_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, release: &SemVer, release_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
     let title = format!("chore: sync release {release} with develop");
     match land_leg_strict(git, hosting, release_branch, "develop", &title, template, "gflow sync", accept_merge_type)? {
@@ -259,8 +259,8 @@ fn sync_with_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, rel
             println!("Develop already contains {release_branch}.");
             Ok(())
         }
-        LegState::Pending { url, finish } => {
-            announce_pending_landing(hosting, &title, &url, "gflow sync", &finish_conflict_hint(&finish, "develop"));
+        LegState::Pending { url, landing } => {
+            announce_pending_landing(hosting, &title, &url, "gflow sync", &landing_conflict_hint(&landing, "develop"));
             Ok(())
         }
     }
@@ -405,9 +405,9 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
                     None => {
                         staging_gate(git, &release_branch, main_branch, major, minor, cfg.bump_strategy)?;
                         let title = format!("chore: merge release {release} into {main_branch}");
-                        let finish = ensure_finish_branch(git, &release_branch, main_branch, "gflow finish")?;
-                        let url = hosting.create_or_get_pr(&finish, main_branch, &title, landing_pr_body(template))?;
-                        announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, main_branch));
+                        let landing = ensure_landing_branch(git, &release_branch, main_branch, "gflow finish")?;
+                        let url = hosting.create_or_get_pr(&landing, main_branch, &title, landing_pr_body(template))?;
+                        announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, main_branch));
                         return Ok(());
                     }
                 }
@@ -433,9 +433,9 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
             None => {
                 staging_gate(git, &release_branch, main_branch, major, minor, cfg.bump_strategy)?;
                 let title = format!("chore: merge release {release} into {main_branch}");
-                let finish = ensure_finish_branch(git, &release_branch, main_branch, "gflow finish")?;
-                let url = hosting.create_or_get_pr(&finish, main_branch, &title, landing_pr_body(template))?;
-                announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, main_branch));
+                let landing = ensure_landing_branch(git, &release_branch, main_branch, "gflow finish")?;
+                let url = hosting.create_or_get_pr(&landing, main_branch, &title, landing_pr_body(template))?;
+                announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, main_branch));
                 return Ok(());
             }
         },
@@ -446,19 +446,19 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
     match land_leg_strict(git, hosting, &release_branch, "develop", &title, template, "gflow finish", accept_merge_type)? {
         LegState::Landed(pr) => landed.push(pr),
         LegState::ContentPresent => content_landed = true,
-        LegState::Pending { url, finish } => {
-            announce_pending_landing(hosting, &title, &url, "gflow finish", &finish_conflict_hint(&finish, "develop"));
+        LegState::Pending { url, landing } => {
+            announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, "develop"));
             return Ok(());
         }
     }
 
-    let finish_names = [
-        finish_branch_name(&release_branch, main_branch),
-        finish_branch_name(&release_branch, "develop"),
+    let landing_names = [
+        landing_branch_name(&release_branch, main_branch),
+        landing_branch_name(&release_branch, "develop"),
     ];
-    let tip_landed = content_landed || tip_landed_somewhere(git, &release_branch, &landed, &finish_names)?;
-    // Finish branches go first: source cleanup may remove the worktree the
+    let tip_landed = content_landed || tip_landed_somewhere(git, &release_branch, &landed, &landing_names)?;
+    // Landing branches go first: source cleanup may remove the worktree the
     // process stands in, after which no git call can run.
-    cleanup_finish_branches(git, &release_branch)?;
+    cleanup_landing_branches(git, &release_branch)?;
     finish_release_cleanup(git, cfg, &release_branch, main_branch, &shipped_version, tip_landed)
 }

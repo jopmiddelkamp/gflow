@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::git::Git;
 use crate::hosting::{HostingPlatform, LandedPr, PrBody};
 use crate::repo_config::{BumpStrategy, Mode, RepoConfig};
-use crate::version::{finish_branch_name, SemVer};
+use crate::version::{landing_branch_name, SemVer};
 use crate::version_script::VersionScript;
 
 // --- Idempotent finish steps -----------------------------------------------
@@ -86,7 +86,7 @@ pub(crate) fn push_tag_if_missing(git: &dyn Git, tag: &str) -> Result<(), String
 }
 
 // --- PR completion-type policy ----------------------------------------------
-// Every PR gflow opens must be completed a specific way: finish/* landing PRs
+// Every PR gflow opens must be completed a specific way: landing/* PRs
 // with a merge commit (history stays connected), everything else squashed (one
 // commit per change on the target). The type is derived from the merge
 // commit's parent count; a wrong completion hard-stops the flow until the
@@ -117,7 +117,7 @@ pub(crate) const WORK_PR_UNDO: &str =
      2. Run 'git commit --amend --no-edit' on this branch — the new commit id lets a fresh PR open.\n    \
      3. Re-run 'gflow finish'.";
 
-/// Undo recipe for a finish/* landing PR that was squashed: protected branches
+/// Undo recipe for a landing/* landing PR that was squashed: protected branches
 /// cannot be force-pushed back, so the platform's revert is the only clean path.
 pub(crate) const LANDING_PR_UNDO: &str =
     "To undo it: revert the landing PR on the hosting platform, then re-run this command.\n\
@@ -188,26 +188,26 @@ pub(crate) fn reconcile_with_origin(git: &dyn Git, branch: &str) -> Result<(), S
     Ok(())
 }
 
-/// The migration guard for finish-branch landings: an open PR whose head is
+/// The migration guard for landing branches: an open PR whose head is
 /// the source branch itself comes from an older gflow and must be dealt with
 /// by a human — gflow never merges or closes PRs.
 pub(crate) fn refuse_open_legacy_pr(hosting: &dyn HostingPlatform, source: &str, target: &str) -> Result<(), String> {
     match hosting.open_pr_to(source, target)? {
         Some(url) => Err(format!(
             "A landing PR from {source} into {target} is still open from an older gflow: {url}\n\
-             Either merge it and re-run 'gflow finish', or close/abandon it and re-run — gflow will then reopen it from a finish/* branch."
+             Either merge it and re-run 'gflow finish', or close/abandon it and re-run — gflow will then reopen it from a landing/* branch."
         )),
         None => Ok(()),
     }
 }
 
 /// Lenient leg lookup (the mainline leg, whose tag is already published once
-/// landed): landed once stays landed. Checks the finish-branch head first,
-/// then the legacy head — drop the fallback once every pre-finish-branch
+/// landed): landed once stays landed. Checks the landing-branch head first,
+/// then the legacy head — drop the fallback once every pre-landing-branch
 /// landing has migrated.
 pub(crate) fn finish_leg_landed(git: &dyn Git, hosting: &dyn HostingPlatform, source: &str, target: &str, accept_merge_type: bool) -> Result<Option<LandedPr>, String> {
-    let finish = finish_branch_name(source, target);
-    let pr = match leg_landed(git, hosting, &finish, target)? {
+    let landing = landing_branch_name(source, target);
+    let pr = match leg_landed(git, hosting, &landing, target)? {
         Some(pr) => Some(pr),
         None => leg_landed(git, hosting, source, target)?,
     };
@@ -223,7 +223,7 @@ pub(crate) fn finish_leg_landed(git: &dyn Git, hosting: &dyn HostingPlatform, so
 /// Strict leg lookup (develop and release legs): landed only while the merged
 /// landing still contains the current source tip. A landing that predates new
 /// source commits (a mid-release sync, an earlier finish attempt) re-opens
-/// with a refreshed finish branch instead of silently dropping the commits.
+/// with a refreshed landing branch instead of silently dropping the commits.
 pub(crate) fn finish_leg_landed_strict(git: &dyn Git, hosting: &dyn HostingPlatform, source: &str, target: &str, accept_merge_type: bool) -> Result<Option<LandedPr>, String> {
     let Some(pr) = finish_leg_landed(git, hosting, source, target, accept_merge_type)? else {
         return Ok(None);
@@ -237,87 +237,87 @@ pub(crate) fn finish_leg_landed_strict(git: &dyn Git, hosting: &dyn HostingPlatf
 }
 
 /// Whether the landed PR's content includes the current source tip: head
-/// equality (no conflicts were resolved), else ancestry via the finish refs —
+/// equality (no conflicts were resolved), else ancestry via the landing refs —
 /// origin first, since a remote-side resolution never moves the local ref.
 fn landing_contains_tip(git: &dyn Git, source: &str, target: &str, pr: &LandedPr) -> Result<bool, String> {
     if git.branch_sha(source)? == pr.head_sha {
         return Ok(true);
     }
-    let finish = finish_branch_name(source, target);
-    if git.remote_branch_exists(&finish)? && git.is_ancestor(source, &format!("origin/{finish}"))? {
+    let landing = landing_branch_name(source, target);
+    if git.remote_branch_exists(&landing)? && git.is_ancestor(source, &format!("origin/{landing}"))? {
         return Ok(true);
     }
-    Ok(git.local_branch_exists(&finish)? && git.is_ancestor(source, &finish)?)
+    Ok(git.local_branch_exists(&landing)? && git.is_ancestor(source, &landing)?)
 }
 
-/// Make the leg's finish branch exist, contain the source tip AND the target
+/// Make the leg's landing branch exist, contain the source tip AND the target
 /// tip, and be pushed — the landing PR is born mergeable, so conflicts surface
-/// here instead of on the platform. `origin/{finish}` is the truth: it may
-/// carry conflict resolutions the local ref never sees. A finish branch is
+/// here instead of on the platform. `origin/{landing}` is the truth: it may
+/// carry conflict resolutions the local ref never sees. A landing branch is
 /// only ever appended to — a moved source or target is merged in, never
 /// force-pushed over someone's resolution. A conflicted merge is left in
-/// place ON the finish branch (the source branch is never touched); the
+/// place ON the landing branch (the source branch is never touched); the
 /// error names the recovery, and the re-run pushes the resolution.
-pub(crate) fn ensure_finish_branch(git: &dyn Git, source: &str, target: &str, rerun: &str) -> Result<String, String> {
+pub(crate) fn ensure_landing_branch(git: &dyn Git, source: &str, target: &str, rerun: &str) -> Result<String, String> {
     reconcile_with_origin(git, source)?;
-    let finish = finish_branch_name(source, target);
-    let origin_finish = format!("origin/{finish}");
+    let landing = landing_branch_name(source, target);
+    let origin_landing = format!("origin/{landing}");
     let origin_target = format!("origin/{target}");
-    let remote = git.remote_branch_exists(&finish)?;
+    let remote = git.remote_branch_exists(&landing)?;
     if remote
-        && git.is_ancestor(source, &origin_finish)?
-        && git.is_ancestor(&origin_target, &origin_finish)?
+        && git.is_ancestor(source, &origin_landing)?
+        && git.is_ancestor(&origin_target, &origin_landing)?
     {
-        return Ok(finish);
+        return Ok(landing);
     }
-    if !git.local_branch_exists(&finish)? {
+    if !git.local_branch_exists(&landing)? {
         if remote {
-            git.create_branch_no_checkout(&finish, &origin_finish)?;
+            git.create_branch_no_checkout(&landing, &origin_landing)?;
         } else {
-            git.create_branch_no_checkout(&finish, source)?;
+            git.create_branch_no_checkout(&landing, source)?;
         }
     }
-    if !git.is_ancestor(source, &finish)? || (remote && !git.is_ancestor(&origin_finish, &finish)?) {
-        println!("Refreshing {finish} with {source}...");
+    if !git.is_ancestor(source, &landing)? || (remote && !git.is_ancestor(&origin_landing, &landing)?) {
+        println!("Refreshing {landing} with {source}...");
         let prior = git.current_branch()?;
-        git.checkout(&finish)?;
+        git.checkout(&landing)?;
         if remote {
-            git.ff_merge(&origin_finish)?;
+            git.ff_merge(&origin_landing)?;
         }
-        git.merge(source, &format!("chore: refresh {finish} with {source}"))
-            .map_err(|e| format!("{e}\n{}", finish_merge_conflict_hint(&finish, source, rerun)))?;
+        git.merge(source, &format!("chore: refresh {landing} with {source}"))
+            .map_err(|e| format!("{e}\n{}", landing_merge_conflict_hint(&landing, source, rerun)))?;
         git.checkout(&prior)?;
     }
-    if !git.is_ancestor(&origin_target, &finish)? {
-        println!("Merging {target} into {finish}...");
+    if !git.is_ancestor(&origin_target, &landing)? {
+        println!("Merging {target} into {landing}...");
         let prior = git.current_branch()?;
-        git.checkout(&finish)?;
-        git.merge(&origin_target, &format!("chore: merge {target} into {finish}"))
-            .map_err(|e| format!("{e}\n{}", finish_merge_conflict_hint(&finish, source, rerun)))?;
+        git.checkout(&landing)?;
+        git.merge(&origin_target, &format!("chore: merge {target} into {landing}"))
+            .map_err(|e| format!("{e}\n{}", landing_merge_conflict_hint(&landing, source, rerun)))?;
         git.checkout(&prior)?;
     }
-    git.push(&finish)?;
-    Ok(finish)
+    git.push(&landing)?;
+    Ok(landing)
 }
 
-/// The pending block's conflict line: gflow merges the target into the finish
+/// The pending block's conflict line: gflow merges the target into the landing
 /// branch on every run, so a PR the platform flags as conflicted (the target
 /// moved after it opened) is healed by re-running.
-pub(crate) fn finish_conflict_hint(finish: &str, target: &str) -> String {
+pub(crate) fn landing_conflict_hint(landing: &str, target: &str) -> String {
     format!(
         "Conflicts later ({target} moved)? Just re-run — gflow merges `{target}` into \
-         `{finish}` in this worktree and stops there for you to resolve locally if needed."
+         `{landing}` in this worktree and stops there for you to resolve locally if needed."
     )
 }
 
-/// Recovery for a conflicted merge into the finish branch: the tree is left
-/// mid-merge ON the finish branch — resolution happens there, never on the
+/// Recovery for a conflicted merge into the landing branch: the tree is left
+/// mid-merge ON the landing branch — resolution happens there, never on the
 /// source branch. The hint must announce that switch loudly (the user's
 /// worktree changed under them) and promise the switch-back the lifecycle
 /// performs on re-run. No push step: the re-run pushes the resolved branch.
-pub(crate) fn finish_merge_conflict_hint(finish: &str, source: &str, rerun: &str) -> String {
+pub(crate) fn landing_merge_conflict_hint(landing: &str, source: &str, rerun: &str) -> String {
     format!(
-        "⚠ Merge conflict — gflow switched this worktree to {finish} \
+        "⚠ Merge conflict — gflow switched this worktree to {landing} \
          to build the landing branch, and it is now mid-merge there.\n\
          Resolve the conflicts here, then:\n    \
          git add . && git commit --no-edit\n    {rerun}\n\
@@ -330,12 +330,12 @@ pub(crate) fn finish_merge_conflict_hint(finish: &str, source: &str, rerun: &str
 pub(crate) enum LegState {
     Landed(LandedPr),
     ContentPresent,
-    Pending { url: String, finish: String },
+    Pending { url: String, landing: String },
 }
 
 /// Drive one strict landing leg: refuse legacy PRs, recognize a landing that
 /// still contains the tip, skip a target that already has the content, else
-/// open (or reuse) the PR from the leg's finish branch.
+/// open (or reuse) the PR from the leg's landing branch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn land_leg_strict(git: &dyn Git, hosting: &dyn HostingPlatform, source: &str, target: &str, title: &str, template: Option<&Path>, rerun: &str, accept_merge_type: bool) -> Result<LegState, String> {
     refuse_open_legacy_pr(hosting, source, target)?;
@@ -346,9 +346,9 @@ pub(crate) fn land_leg_strict(git: &dyn Git, hosting: &dyn HostingPlatform, sour
         println!("↷ skipped: landing into {target} (already contains {source})");
         return Ok(LegState::ContentPresent);
     }
-    let finish = ensure_finish_branch(git, source, target, rerun)?;
-    let url = hosting.create_or_get_pr(&finish, target, title, landing_pr_body(template))?;
-    Ok(LegState::Pending { url, finish })
+    let landing = ensure_landing_branch(git, source, target, rerun)?;
+    let url = hosting.create_or_get_pr(&landing, target, title, landing_pr_body(template))?;
+    Ok(LegState::Pending { url, landing })
 }
 
 /// A landing PR's description: an explicitly authored gflow template wins;
@@ -358,11 +358,10 @@ pub(crate) fn landing_pr_body(template: Option<&Path>) -> PrBody<'_> {
     template.and_then(|p| p.to_str()).map_or(PrBody::Empty, PrBody::File)
 }
 
-/// Delete every finish branch of `source` — machinery, never kept, found by
+/// Delete every landing branch of `source` — machinery, never kept, found by
 /// pattern so a leg whose target vanished mid-finish leaves no orphan.
-pub(crate) fn cleanup_finish_branches(git: &dyn Git, source: &str) -> Result<(), String> {
-    let pattern = format!("finish/{}-into-*", source.replace('/', "-"));
-    let branches = git.list_branches_matching(&pattern)?;
+pub(crate) fn cleanup_landing_branches(git: &dyn Git, source: &str) -> Result<(), String> {
+    let branches = git.list_branches_matching(&landing_branch_name(source, "*"))?;
     delete_branches_guarded(git, &branches.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
@@ -385,20 +384,20 @@ pub(crate) fn leg_landed(git: &dyn Git, hosting: &dyn HostingPlatform, source: &
 
 /// Whether `source`'s tip went somewhere that landed. Squash merges leave no
 /// ancestry between source and target, so head equality is the primary test;
-/// a conflict-resolved landing has extra commits on its finish branch, whose
+/// a conflict-resolved landing has extra commits on its landing branch, whose
 /// refs (origin first — a remote-side resolution never moves the local ref)
 /// prove containment by ancestry. Nothing provable → false: cleanup keeps the
 /// branch rather than delete commits that may never have landed.
-pub fn tip_landed_somewhere(git: &dyn Git, source: &str, landed: &[LandedPr], finish_branches: &[String]) -> Result<bool, String> {
+pub fn tip_landed_somewhere(git: &dyn Git, source: &str, landed: &[LandedPr], landing_branches: &[String]) -> Result<bool, String> {
     let tip = git.branch_sha(source)?;
     if landed.iter().any(|pr| pr.head_sha == tip) {
         return Ok(true);
     }
-    for finish in finish_branches {
-        if git.remote_branch_exists(finish)? && git.is_ancestor(source, &format!("origin/{finish}"))? {
+    for landing in landing_branches {
+        if git.remote_branch_exists(landing)? && git.is_ancestor(source, &format!("origin/{landing}"))? {
             return Ok(true);
         }
-        if git.local_branch_exists(finish)? && git.is_ancestor(source, finish)? {
+        if git.local_branch_exists(landing)? && git.is_ancestor(source, landing)? {
             return Ok(true);
         }
     }
@@ -836,7 +835,7 @@ mod tests {
     fn landing_lookups_propagate_hosting_errors_without_git_mutations() {
         for call in [
             "open_pr_to:source:main",
-            "merged_pr_to:finish/source-into-main:main",
+            "merged_pr_to:landing/source-into-main:main",
             "merged_pr_to:source:main",
         ] {
             let git = MockGit::new();
@@ -865,7 +864,7 @@ mod tests {
     fn strict_landing_lookup_requires_readable_merge_and_tip_evidence() {
         let mut hosting = MockHosting::new();
         hosting.merged_prs_to.insert(
-            ("finish/source-into-main".into(), "main".into()),
+            ("landing/source-into-main".into(), "main".into()),
             landed_pr_fixture(),
         );
         for remote in [false, true] {
@@ -874,19 +873,19 @@ mod tests {
                     "is_ancestor:merged:origin/main",
                     "commit_parent_count:merged",
                     "branch_sha:source",
-                    "remote_branch_exists:finish/source-into-main",
-                    "is_ancestor:source:origin/finish/source-into-main",
-                    "local_branch_exists:finish/source-into-main",
-                    "is_ancestor:source:finish/source-into-main",
+                    "remote_branch_exists:landing/source-into-main",
+                    "is_ancestor:source:origin/landing/source-into-main",
+                    "local_branch_exists:landing/source-into-main",
+                    "is_ancestor:source:landing/source-into-main",
                 ]
             } else {
                 &[
                     "is_ancestor:merged:origin/main",
                     "commit_parent_count:merged",
                     "branch_sha:source",
-                    "remote_branch_exists:finish/source-into-main",
-                    "local_branch_exists:finish/source-into-main",
-                    "is_ancestor:source:finish/source-into-main",
+                    "remote_branch_exists:landing/source-into-main",
+                    "local_branch_exists:landing/source-into-main",
+                    "is_ancestor:source:landing/source-into-main",
                 ]
             };
             assert_each_git_failure(
@@ -897,10 +896,10 @@ mod tests {
                         .insert(("merged".into(), "origin/main".into()));
                     git.parent_counts.insert("merged".into(), 2);
                     git.existing_local_branches
-                        .insert("finish/source-into-main".into());
+                        .insert("landing/source-into-main".into());
                     if remote {
                         git.existing_remote_branches
-                            .insert("finish/source-into-main".into());
+                            .insert("landing/source-into-main".into());
                     }
                     git
                 },
@@ -910,82 +909,82 @@ mod tests {
     }
 
     #[test]
-    fn finish_branch_creation_stops_at_failed_reads_and_writes() {
+    fn landing_branch_creation_stops_at_failed_reads_and_writes() {
         assert_each_git_failure(
             &[
                 "remote_branch_exists:source",
                 "push:source",
-                "remote_branch_exists:finish/source-into-main",
-                "local_branch_exists:finish/source-into-main",
-                "create_branch_no_checkout:finish/source-into-main:source",
-                "is_ancestor:source:finish/source-into-main",
-                "is_ancestor:origin/main:finish/source-into-main",
+                "remote_branch_exists:landing/source-into-main",
+                "local_branch_exists:landing/source-into-main",
+                "create_branch_no_checkout:landing/source-into-main:source",
+                "is_ancestor:source:landing/source-into-main",
+                "is_ancestor:origin/main:landing/source-into-main",
                 "current_branch",
-                "checkout:finish/source-into-main",
-                "merge:origin/main:chore: merge main into finish/source-into-main",
+                "checkout:landing/source-into-main",
+                "merge:origin/main:chore: merge main into landing/source-into-main",
                 "checkout:develop",
-                "push:finish/source-into-main",
+                "push:landing/source-into-main",
             ],
             MockGit::new,
-            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+            |git| ensure_landing_branch(git, "source", "main", "gflow finish").map(|_| ()),
         );
     }
 
     #[test]
-    fn finish_branch_remote_reuse_stops_before_overwriting_unreadable_history() {
+    fn landing_branch_remote_reuse_stops_before_overwriting_unreadable_history() {
         assert_each_git_failure(
             &[
                 "remote_branch_exists:source",
                 "push:source",
-                "remote_branch_exists:finish/source-into-main",
-                "is_ancestor:source:origin/finish/source-into-main",
-                "local_branch_exists:finish/source-into-main",
-                "create_branch_no_checkout:finish/source-into-main:origin/finish/source-into-main",
-                "is_ancestor:source:finish/source-into-main",
+                "remote_branch_exists:landing/source-into-main",
+                "is_ancestor:source:origin/landing/source-into-main",
+                "local_branch_exists:landing/source-into-main",
+                "create_branch_no_checkout:landing/source-into-main:origin/landing/source-into-main",
+                "is_ancestor:source:landing/source-into-main",
                 "current_branch",
-                "checkout:finish/source-into-main",
-                "ff_merge:origin/finish/source-into-main",
-                "merge:source:chore: refresh finish/source-into-main with source",
+                "checkout:landing/source-into-main",
+                "ff_merge:origin/landing/source-into-main",
+                "merge:source:chore: refresh landing/source-into-main with source",
                 "checkout:develop",
-                "is_ancestor:origin/main:finish/source-into-main",
+                "is_ancestor:origin/main:landing/source-into-main",
                 "current_branch",
-                "checkout:finish/source-into-main",
-                "merge:origin/main:chore: merge main into finish/source-into-main",
+                "checkout:landing/source-into-main",
+                "merge:origin/main:chore: merge main into landing/source-into-main",
                 "checkout:develop",
-                "push:finish/source-into-main",
+                "push:landing/source-into-main",
             ],
             || {
                 let mut git = MockGit::new();
                 git.existing_remote_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git
             },
-            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+            |git| ensure_landing_branch(git, "source", "main", "gflow finish").map(|_| ()),
         );
         assert_each_git_failure(
             &[
                 "remote_branch_exists:source",
                 "push:source",
-                "remote_branch_exists:finish/source-into-main",
-                "is_ancestor:source:origin/finish/source-into-main",
-                "is_ancestor:origin/main:origin/finish/source-into-main",
-                "local_branch_exists:finish/source-into-main",
-                "is_ancestor:source:finish/source-into-main",
-                "is_ancestor:origin/finish/source-into-main:finish/source-into-main",
+                "remote_branch_exists:landing/source-into-main",
+                "is_ancestor:source:origin/landing/source-into-main",
+                "is_ancestor:origin/main:origin/landing/source-into-main",
+                "local_branch_exists:landing/source-into-main",
+                "is_ancestor:source:landing/source-into-main",
+                "is_ancestor:origin/landing/source-into-main:landing/source-into-main",
             ],
             || {
                 let mut git = MockGit::new();
                 git.existing_remote_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git.existing_local_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git.ancestors
-                    .insert(("source".into(), "origin/finish/source-into-main".into()));
+                    .insert(("source".into(), "origin/landing/source-into-main".into()));
                 git.ancestors
-                    .insert(("source".into(), "finish/source-into-main".into()));
+                    .insert(("source".into(), "landing/source-into-main".into()));
                 git
             },
-            |git| ensure_finish_branch(git, "source", "main", "gflow finish").map(|_| ()),
+            |git| ensure_landing_branch(git, "source", "main", "gflow finish").map(|_| ()),
         );
     }
 
@@ -1017,7 +1016,7 @@ mod tests {
         }
         let git = MockGit::new();
         let mut hosting = MockHosting::new();
-        let call = "create_or_get_pr:finish/source-into-main:main:land source:empty-body";
+        let call = "create_or_get_pr:landing/source-into-main:main:land source:empty-body";
         hosting.fail_call = Some((call.into(), 1));
         let result = land_leg_strict(
             &git,
@@ -1036,35 +1035,35 @@ mod tests {
         assert_eq!(hosting.calls().last().map(String::as_str), Some(call));
         assert_eq!(
             git.calls().last().map(String::as_str),
-            Some("push:finish/source-into-main")
+            Some("push:landing/source-into-main")
         );
     }
 
     #[test]
-    fn finish_branch_cleanup_stops_at_the_first_failed_delete() {
+    fn landing_branch_cleanup_stops_at_the_first_failed_delete() {
         assert_each_git_failure(
             &[
-                "list_branches_matching:finish/source-into-*",
-                "local_branch_exists:finish/source-into-main",
-                "delete_branch_local:finish/source-into-main",
-                "remote_branch_exists:finish/source-into-main",
-                "local_branch_exists:finish/source-into-develop",
-                "remote_branch_exists:finish/source-into-develop",
-                "delete_remote_branches:finish/source-into-main",
+                "list_branches_matching:landing/source-into-*",
+                "local_branch_exists:landing/source-into-main",
+                "delete_branch_local:landing/source-into-main",
+                "remote_branch_exists:landing/source-into-main",
+                "local_branch_exists:landing/source-into-develop",
+                "remote_branch_exists:landing/source-into-develop",
+                "delete_remote_branches:landing/source-into-main",
             ],
             || {
                 let mut git = MockGit::new();
                 git.branches_matching = vec![
-                    "finish/source-into-main".into(),
-                    "finish/source-into-develop".into(),
+                    "landing/source-into-main".into(),
+                    "landing/source-into-develop".into(),
                 ];
                 git.existing_local_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git.existing_remote_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git
             },
-            |git| cleanup_finish_branches(git, "source"),
+            |git| cleanup_landing_branches(git, "source"),
         );
     }
 
@@ -1152,17 +1151,17 @@ mod tests {
         assert_each_git_failure(
             &[
                 "branch_sha:source",
-                "remote_branch_exists:finish/source-into-main",
-                "is_ancestor:source:origin/finish/source-into-main",
-                "local_branch_exists:finish/source-into-main",
-                "is_ancestor:source:finish/source-into-main",
+                "remote_branch_exists:landing/source-into-main",
+                "is_ancestor:source:origin/landing/source-into-main",
+                "local_branch_exists:landing/source-into-main",
+                "is_ancestor:source:landing/source-into-main",
             ],
             || {
                 let mut git = MockGit::new();
                 git.existing_local_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git.existing_remote_branches
-                    .insert("finish/source-into-main".into());
+                    .insert("landing/source-into-main".into());
                 git
             },
             |git| {
@@ -1170,7 +1169,7 @@ mod tests {
                     git,
                     "source",
                     &[landed_pr_fixture()],
-                    &["finish/source-into-main".into()],
+                    &["landing/source-into-main".into()],
                 )
                 .map(|_| ())
             },
@@ -1252,35 +1251,35 @@ mod tests {
     }
 
     #[test]
-    fn finish_branch_cleanup_removes_all_discovered_finish_branches_in_one_push() {
+    fn landing_branch_cleanup_removes_all_discovered_landing_branches_in_one_push() {
         let mut git = MockGit::new();
         git.branches_matching = vec![
-            "finish/source-into-main".into(),
-            "finish/source-into-develop".into(),
-            "finish/source-into-release-1.2.0".into(),
+            "landing/source-into-main".into(),
+            "landing/source-into-develop".into(),
+            "landing/source-into-release-1.2.0".into(),
         ];
-        git.existing_local_branches.insert("finish/source-into-main".into());
-        git.existing_remote_branches.insert("finish/source-into-develop".into());
-        git.existing_remote_branches.insert("finish/source-into-release-1.2.0".into());
-        cleanup_finish_branches(&git, "source").unwrap();
+        git.existing_local_branches.insert("landing/source-into-main".into());
+        git.existing_remote_branches.insert("landing/source-into-develop".into());
+        git.existing_remote_branches.insert("landing/source-into-release-1.2.0".into());
+        cleanup_landing_branches(&git, "source").unwrap();
         assert_eq!(git.calls(), [
-            "list_branches_matching:finish/source-into-*",
-            "local_branch_exists:finish/source-into-main",
-            "delete_branch_local:finish/source-into-main",
-            "remote_branch_exists:finish/source-into-main",
-            "local_branch_exists:finish/source-into-develop",
-            "remote_branch_exists:finish/source-into-develop",
-            "local_branch_exists:finish/source-into-release-1.2.0",
-            "remote_branch_exists:finish/source-into-release-1.2.0",
-            "delete_remote_branches:finish/source-into-develop finish/source-into-release-1.2.0",
+            "list_branches_matching:landing/source-into-*",
+            "local_branch_exists:landing/source-into-main",
+            "delete_branch_local:landing/source-into-main",
+            "remote_branch_exists:landing/source-into-main",
+            "local_branch_exists:landing/source-into-develop",
+            "remote_branch_exists:landing/source-into-develop",
+            "local_branch_exists:landing/source-into-release-1.2.0",
+            "remote_branch_exists:landing/source-into-release-1.2.0",
+            "delete_remote_branches:landing/source-into-develop landing/source-into-release-1.2.0",
         ]);
     }
 
     #[test]
-    fn finish_branch_cleanup_skips_the_push_when_origin_has_none_left() {
+    fn landing_branch_cleanup_skips_the_push_when_origin_has_none_left() {
         let mut git = MockGit::new();
-        git.branches_matching = vec!["finish/source-into-main".into()];
-        cleanup_finish_branches(&git, "source").unwrap();
+        git.branches_matching = vec!["landing/source-into-main".into()];
+        cleanup_landing_branches(&git, "source").unwrap();
         let calls = git.calls();
         assert!(!calls.iter().any(|c| c.starts_with("delete_remote_branches")), "calls: {calls:?}");
     }
@@ -1297,101 +1296,101 @@ mod tests {
     }
 
     #[test]
-    fn fully_prepared_remote_finish_branch_needs_no_mutations() {
+    fn fully_prepared_remote_landing_branch_needs_no_mutations() {
         let mut git = MockGit::new();
-        git.existing_remote_branches.extend(["source".into(), "finish/source-into-main".into()]);
+        git.existing_remote_branches.extend(["source".into(), "landing/source-into-main".into()]);
         git.pushed_branches.insert("source".into());
         git.ancestors.extend([
-            ("source".into(), "origin/finish/source-into-main".into()),
-            ("origin/main".into(), "origin/finish/source-into-main".into()),
+            ("source".into(), "origin/landing/source-into-main".into()),
+            ("origin/main".into(), "origin/landing/source-into-main".into()),
         ]);
-        assert_eq!(ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(), "finish/source-into-main");
+        assert_eq!(ensure_landing_branch(&git, "source", "main", "gflow finish").unwrap(), "landing/source-into-main");
         assert_eq!(git.calls(), [
             "remote_branch_exists:source",
             "is_pushed:source",
-            "remote_branch_exists:finish/source-into-main",
-            "is_ancestor:source:origin/finish/source-into-main",
-            "is_ancestor:origin/main:origin/finish/source-into-main",
+            "remote_branch_exists:landing/source-into-main",
+            "is_ancestor:source:origin/landing/source-into-main",
+            "is_ancestor:origin/main:origin/landing/source-into-main",
         ]);
     }
 
     #[test]
-    fn stale_remote_finish_branch_is_refreshed_and_pushed_after_both_merges() {
+    fn stale_remote_landing_branch_is_refreshed_and_pushed_after_both_merges() {
         let mut git = MockGit::new();
-        git.existing_remote_branches.insert("finish/source-into-main".into());
-        assert_eq!(ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(), "finish/source-into-main");
+        git.existing_remote_branches.insert("landing/source-into-main".into());
+        assert_eq!(ensure_landing_branch(&git, "source", "main", "gflow finish").unwrap(), "landing/source-into-main");
         assert_eq!(git.calls(), [
             "remote_branch_exists:source",
             "push:source",
-            "remote_branch_exists:finish/source-into-main",
-            "is_ancestor:source:origin/finish/source-into-main",
-            "local_branch_exists:finish/source-into-main",
-            "create_branch_no_checkout:finish/source-into-main:origin/finish/source-into-main",
-            "is_ancestor:source:finish/source-into-main",
+            "remote_branch_exists:landing/source-into-main",
+            "is_ancestor:source:origin/landing/source-into-main",
+            "local_branch_exists:landing/source-into-main",
+            "create_branch_no_checkout:landing/source-into-main:origin/landing/source-into-main",
+            "is_ancestor:source:landing/source-into-main",
             "current_branch",
-            "checkout:finish/source-into-main",
-            "ff_merge:origin/finish/source-into-main",
-            "merge:source:chore: refresh finish/source-into-main with source",
+            "checkout:landing/source-into-main",
+            "ff_merge:origin/landing/source-into-main",
+            "merge:source:chore: refresh landing/source-into-main with source",
             "checkout:develop",
-            "is_ancestor:origin/main:finish/source-into-main",
+            "is_ancestor:origin/main:landing/source-into-main",
             "current_branch",
-            "checkout:finish/source-into-main",
-            "merge:origin/main:chore: merge main into finish/source-into-main",
+            "checkout:landing/source-into-main",
+            "merge:origin/main:chore: merge main into landing/source-into-main",
             "checkout:develop",
-            "push:finish/source-into-main",
+            "push:landing/source-into-main",
         ]);
     }
 
     #[test]
-    fn a_local_finish_branch_refresh_keeps_the_target_it_already_contains() {
+    fn a_local_landing_branch_refresh_keeps_the_target_it_already_contains() {
         let mut git = MockGit::new();
-        git.existing_local_branches.insert("finish/source-into-main".into());
-        git.ancestors.insert(("origin/main".into(), "finish/source-into-main".into()));
+        git.existing_local_branches.insert("landing/source-into-main".into());
+        git.ancestors.insert(("origin/main".into(), "landing/source-into-main".into()));
 
         assert_eq!(
-            ensure_finish_branch(&git, "source", "main", "gflow finish").unwrap(),
-            "finish/source-into-main"
+            ensure_landing_branch(&git, "source", "main", "gflow finish").unwrap(),
+            "landing/source-into-main"
         );
         assert_eq!(git.calls(), [
             "remote_branch_exists:source",
             "push:source",
-            "remote_branch_exists:finish/source-into-main",
-            "local_branch_exists:finish/source-into-main",
-            "is_ancestor:source:finish/source-into-main",
+            "remote_branch_exists:landing/source-into-main",
+            "local_branch_exists:landing/source-into-main",
+            "is_ancestor:source:landing/source-into-main",
             "current_branch",
-            "checkout:finish/source-into-main",
-            "merge:source:chore: refresh finish/source-into-main with source",
+            "checkout:landing/source-into-main",
+            "merge:source:chore: refresh landing/source-into-main with source",
             "checkout:develop",
-            "is_ancestor:origin/main:finish/source-into-main",
-            "push:finish/source-into-main",
+            "is_ancestor:origin/main:landing/source-into-main",
+            "push:landing/source-into-main",
         ]);
     }
 
     #[test]
-    fn tip_is_landed_only_with_matching_head_or_finish_branch_containment() {
-        for evidence in ["matching-head", "remote-finish", "local-finish", "none"] {
+    fn tip_is_landed_only_with_matching_head_or_landing_branch_containment() {
+        for evidence in ["matching-head", "remote-landing", "local-landing", "none"] {
             let mut git = MockGit::new();
-            let finish = "finish/source-into-main";
-            git.existing_remote_branches.insert(finish.into());
-            git.existing_local_branches.insert(finish.into());
+            let landing = "landing/source-into-main";
+            git.existing_remote_branches.insert(landing.into());
+            git.existing_local_branches.insert(landing.into());
             match evidence {
                 "matching-head" => { git.head_sha = "old-head".into(); }
-                "remote-finish" => { git.ancestors.insert(("source".into(), "origin/finish/source-into-main".into())); }
-                "local-finish" => { git.ancestors.insert(("source".into(), finish.into())); }
+                "remote-landing" => { git.ancestors.insert(("source".into(), "origin/landing/source-into-main".into())); }
+                "local-landing" => { git.ancestors.insert(("source".into(), landing.into())); }
                 _ => {}
             }
             let pr = landed_pr_fixture();
             let expected = evidence != "none";
             assert_eq!(landing_contains_tip(&git, "source", "main", &pr).unwrap(), expected, "{evidence}");
-            assert_eq!(tip_landed_somewhere(&git, "source", &[pr], &[finish.into()]).unwrap(), expected, "{evidence}");
+            assert_eq!(tip_landed_somewhere(&git, "source", &[pr], &[landing.into()]).unwrap(), expected, "{evidence}");
             assert!(git.calls().iter().all(|call| call.starts_with("branch_sha:") || call.starts_with("remote_branch_exists:") || call.starts_with("local_branch_exists:") || call.starts_with("is_ancestor:")));
         }
         let git = MockGit::new();
-        assert!(!tip_landed_somewhere(&git, "source", &[], &["finish/source-into-main".into()]).unwrap());
+        assert!(!tip_landed_somewhere(&git, "source", &[], &["landing/source-into-main".into()]).unwrap());
         assert_eq!(git.calls(), [
             "branch_sha:source",
-            "remote_branch_exists:finish/source-into-main",
-            "local_branch_exists:finish/source-into-main",
+            "remote_branch_exists:landing/source-into-main",
+            "local_branch_exists:landing/source-into-main",
         ]);
     }
 
@@ -1415,11 +1414,11 @@ mod tests {
                     assert_eq!(pr, landed_pr_fixture());
                 }
                 LegState::ContentPresent => assert_eq!(scenario, "content-present"),
-                LegState::Pending { url, finish } => {
+                LegState::Pending { url, landing } => {
                     assert_eq!(scenario, "pending-pr");
                     assert_eq!(url, "https://github.com/org/repo/pull/1");
-                    assert_eq!(finish, "finish/source-into-main");
-                    assert_eq!(hosting.calls().last().unwrap(), "create_or_get_pr:finish/source-into-main:main:land source:empty-body");
+                    assert_eq!(landing, "landing/source-into-main");
+                    assert_eq!(hosting.calls().last().unwrap(), "create_or_get_pr:landing/source-into-main:main:land source:empty-body");
                 }
             }
             if scenario != "pending-pr" {
@@ -1454,30 +1453,30 @@ mod tests {
     }
 
     #[test]
-    fn finish_conflict_hint_points_at_rerunning() {
-        // gflow merges the target into the finish branch itself, so a PR that
+    fn landing_conflict_hint_points_at_rerunning() {
+        // gflow merges the target into the landing branch itself, so a PR that
         // conflicts later (the target moved) is healed by re-running. The hint
-        // warns that the re-run works on the finish branch in this worktree.
-        let hint = finish_conflict_hint("finish/hotfix-2.11.6-into-main", "main");
+        // warns that the re-run works on the landing branch in this worktree.
+        let hint = landing_conflict_hint("landing/hotfix-2.11.6-into-main", "main");
         assert_eq!(
             hint,
             "Conflicts later (main moved)? Just re-run — gflow merges `main` into \
-             `finish/hotfix-2.11.6-into-main` in this worktree and stops there \
+             `landing/hotfix-2.11.6-into-main` in this worktree and stops there \
              for you to resolve locally if needed."
         );
     }
 
     #[test]
-    fn finish_merge_conflict_hint_announces_the_switch_and_the_auto_switch_back() {
-        // The user's worktree was silently left on the finish branch mid-merge;
+    fn landing_merge_conflict_hint_announces_the_switch_and_the_auto_switch_back() {
+        // The user's worktree was silently left on the landing branch mid-merge;
         // the hint must say so loudly. The copy-pasteable block must not start
         // with `git switch` — mid-merge, that fails. No manual switch-back
         // step: the re-run switches back to the source branch itself. No `git
-        // push` step: the re-run pushes the resolved finish branch itself.
-        let hint = finish_merge_conflict_hint("finish/hotfix-2.11.6-into-main", "hotfix/2.11.6", "gflow finish");
+        // push` step: the re-run pushes the resolved landing branch itself.
+        let hint = landing_merge_conflict_hint("landing/hotfix-2.11.6-into-main", "hotfix/2.11.6", "gflow finish");
         assert_eq!(
             hint,
-            "⚠ Merge conflict — gflow switched this worktree to finish/hotfix-2.11.6-into-main \
+            "⚠ Merge conflict — gflow switched this worktree to landing/hotfix-2.11.6-into-main \
              to build the landing branch, and it is now mid-merge there.\n\
              Resolve the conflicts here, then:\n    \
              git add . && git commit --no-edit\n    gflow finish\n\

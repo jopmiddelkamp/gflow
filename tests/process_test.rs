@@ -74,6 +74,7 @@ case "$*" in
         printf 'feature/coverage\n'
         ;;
     'rev-parse --git-dir') printf '%s/repo/.git\n' "$GFLOW_FIXTURE" ;;
+    'worktree list --porcelain') printf 'worktree %s/main\n' "$GFLOW_FIXTURE" ;;
     'config --get gflow.branch.main') printf 'main\n' ;;
     'config --get gflow.hosting.provider')
         if [ -n "$GFLOW_PROVIDER" ]; then printf '%s\n' "$GFLOW_PROVIDER"; else exit 1; fi
@@ -141,6 +142,25 @@ fn worktree_settings_write_before_repository_or_hosting_checks() {
     assert_success(&output);
     let config = fs::read_to_string(fixture.root.join("repo/.gflow/config.local")).unwrap();
     assert!(config.contains("worktree=true"));
+    let calls = fs::read_to_string(fixture.root.join("git-calls")).unwrap();
+    assert!(!calls.contains("rev-parse --abbrev-ref"));
+    assert!(!calls.contains("remote get-url"));
+}
+
+#[test]
+fn worktree_setup_runs_the_setup_file_before_repository_or_hosting_checks() {
+    let fixture = ProcessFixture::new();
+    fixture.git();
+    fixture.executable("sh", r#"exec /bin/sh "$@""#);
+    fs::write(
+        fixture.root.join("repo/worktrees.json"),
+        r#"["printf '%s' \"$ROOT_WORKTREE_PATH\" > root-seen"]"#,
+    )
+    .unwrap();
+    let output = fixture.run_gflow(&["worktree", "setup"]);
+    assert_success(&output);
+    let seen = fs::read_to_string(fixture.root.join("repo/root-seen")).unwrap();
+    assert_eq!(seen, fixture.root.join("main").display().to_string());
     let calls = fs::read_to_string(fixture.root.join("git-calls")).unwrap();
     assert!(!calls.contains("rev-parse --abbrev-ref"));
     assert!(!calls.contains("remote get-url"));

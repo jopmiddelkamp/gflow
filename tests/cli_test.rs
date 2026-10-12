@@ -1,4 +1,4 @@
-use gflow::cli::{Commands, StartKind, StartOptions, resolve_action};
+use gflow::cli::{Commands, StartKind, StartOptions, WorktreeAction, resolve_action};
 use gflow::flows::start::ReleaseType;
 use gflow::git::branch::BranchType;
 use gflow::action::Action;
@@ -284,6 +284,9 @@ fn the_flag_surface_parses_what_it_promises() {
         Commands::Worktree { local: true, .. }));
     assert!(matches!(parse(&["worktree", "enable", "--local"]).unwrap(),
         Commands::Worktree { local: true, .. }));
+
+    assert!(matches!(parse(&["worktree", "setup"]).unwrap(),
+        Commands::Worktree { action: Some(WorktreeAction::Setup), .. }));
 }
 
 #[test]

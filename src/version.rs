@@ -109,19 +109,19 @@ impl fmt::Display for SemVer {
     }
 }
 
-/// Head branch for one protected landing leg: `finish/<source>-into-<target>`
+/// Head branch for one protected landing leg: `landing/<source>-into-<target>`
 /// with slashes flattened. Cut from the source, merged into exactly one
 /// target, deleted after landing — conflict resolution happens here so the
 /// release/hotfix branch itself is never touched.
-pub fn finish_branch_name(source: &str, target: &str) -> String {
-    format!("finish/{}-into-{}", source.replace('/', "-"), target.replace('/', "-"))
+pub fn landing_branch_name(source: &str, target: &str) -> String {
+    format!("landing/{}-into-{}", source.replace('/', "-"), target.replace('/', "-"))
 }
 
-/// Inverse of `finish_branch_name`, recovering the source branch. Finish
+/// Inverse of `landing_branch_name`, recovering the source branch. Finish
 /// branches are only ever built from release/hotfix sources, whose flattened
 /// form (`release-1.2.0`) is unambiguous: a SemVer never contains `-into-`.
-pub fn finish_branch_source(branch: &str) -> Option<String> {
-    let flattened = branch.strip_prefix("finish/")?;
+pub fn landing_branch_source(branch: &str) -> Option<String> {
+    let flattened = branch.strip_prefix("landing/")?;
     for kind in ["release", "hotfix"] {
         if let Some(rest) = flattened.strip_prefix(kind).and_then(|r| r.strip_prefix('-')) {
             if let Some((version, target)) = rest.split_once("-into-") {

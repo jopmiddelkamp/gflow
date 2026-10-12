@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gflow set-version guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: sticky config bar (mode + bump-strategy pills) drives every section below: summary matrix, release graph, hotfix graph, rules */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b2230; --muted: #5d6778; --line: #d5dae3;
+  --develop: #3b6fd8; --work: #0f8f9a; --release: #8a4fd0; --main: #1f8a5b; --hotfix: #d0662b; --version: #c0397f;
+  --script: #b0336f; --script-bg: #fbe4ef;
+  --staging: #a86b12; --staging-bg: #fdf0d2; --prod: #1a7d52; --prod-bg: #d8f1e4; --warn: #c2410c; --warn-bg: #fde8dc;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --surface: #1a1f28; --fg: #e4e8ef; --muted: #98a2b3; --line: #2e3542;
+  --develop: #6f9cf0; --work: #4cc4cf; --release: #b48ae8; --main: #4cc28d; --hotfix: #f0935c; --version: #ee7ab5;
+  --script: #f38fc0; --script-bg: #3d1a2c;
+  --staging: #e8b85a; --staging-bg: #3a2f17; --prod: #4cc28d; --prod-bg: #173628; --warn: #fb923c; --warn-bg: #3d2416; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a1f28; --fg: #e4e8ef; --muted: #98a2b3; --line: #2e3542;
+  --develop: #6f9cf0; --work: #4cc4cf; --release: #b48ae8; --main: #4cc28d; --hotfix: #f0935c; --version: #ee7ab5;
+  --script: #f38fc0; --script-bg: #3d1a2c;
+  --staging: #e8b85a; --staging-bg: #3a2f17; --prod: #4cc28d; --prod-bg: #173628; --warn: #fb923c; --warn-bg: #3d2416; color-scheme: dark; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 36px; }
+h1 { font-size: 1.8rem; margin: 0; font-weight: 600; text-wrap: balance; }
+h2 { font-size: 1.4rem; margin: 0; font-weight: 600; text-wrap: balance; }
+h3 { font-size: .78rem; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 76ch; margin-top: 6px; }
+code { font-family: var(--font-mono); font-size: .88em; }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding-block: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.field { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.field > span { font-family: var(--font-mono); font-size: .8rem; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 2px; }
+.seg button { font: inherit; font-family: var(--font-mono); font-size: .82rem; border: 0; background: transparent; color: var(--fg); padding: 3px 12px; border-radius: 999px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+.seg button:focus-visible { outline: 2px solid var(--develop); outline-offset: 1px; }
+.cfg { font-family: var(--font-mono); font-size: .78rem; color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 8px; padding: 3px 10px; white-space: pre; max-width: 100%; overflow-x: auto; }
+.navlinks { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.navlinks a { color: var(--fg); text-decoration: none; font-size: .85rem; padding: 3px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.navlinks a:hover, .navlinks a:focus-visible { border-color: var(--fg); outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: .85rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+section { display: grid; gap: 16px; scroll-margin-top: 72px; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+svg text { font-family: var(--font-body); }
+.cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .navlinks { margin-left: 0; } }
+ol.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: s; }
+ol.steps li { display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 10px; counter-increment: s; }
+ol.steps li::before { content: counter(s); width: 22px; height: 22px; border-radius: 50%; background: var(--fg); color: var(--surface); font-size: .75rem; font-weight: 600; display: grid; place-items: center; margin-top: 1px; }
+ol.steps b { font-weight: 600; }
+.steps .sub { color: var(--muted); font-size: .9rem; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+td code { white-space: nowrap; }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: .78rem; padding: 0 8px; border-radius: 999px; white-space: nowrap; }
+.stg { background: var(--staging-bg); color: var(--staging); }
+.prd { background: var(--prod-bg); color: var(--prod); }
+.scr { background: var(--script-bg); color: var(--script); }
+.scr.noop { background: transparent; border: 1px dashed var(--script); }
+.cf { background: var(--warn-bg); color: var(--warn); }
+.gone { color: var(--muted); text-decoration: line-through; }
+.muted { color: var(--muted); }
+.how { font-size: .8rem; font-weight: 600; letter-spacing: .02em; }
+.how.direct { color: var(--main); }
+.how.pr { color: var(--version); }
+.how.none { color: var(--muted); }
+.stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 150px; }
+.stat b { display: block; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat span { font-size: .82rem; color: var(--muted); }
+.callout { border-left: 3px solid var(--warn); padding: 10px 14px; background: var(--surface); border-radius: 0 8px 8px 0; font-size: .92rem; }
+.callout b { color: var(--warn); }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.rules .panel p { color: var(--muted); font-size: .9rem; }
+.rules .panel strong { display: block; margin-bottom: 4px; }
+@media (prefers-reduced-motion: no-preference) { svg[data-graph] g { transition: opacity .2s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Where gflow runs <code>set-version.sh</code></h1>
+    <p class="lede">gflow runs <code>.gflow/set-version.sh</code> (or <code>.cmd</code> on Windows) at the moments the version changes, and commits whatever it writes. Pick your <code>.gflow/config</code> below; every diagram, step and table adapts. Examples assume production runs <code>1.3.0</code>, <code>develop</code> already says <code>1.4.0</code>, and the script only writes the version it is given.</p>
+  </header>
+
+  <div class="bar" role="group" aria-label="Repository config">
+    <div class="field"><span>mode=</span>
+      <div class="seg" data-key="mode"><button type="button" id="mode-free" data-value="free">free</button><button type="button" id="mode-protected" data-value="protected">protected</button></div>
+    </div>
+    <div class="field"><span>bump-strategy=</span>
+      <div class="seg" data-key="strategy"><button type="button" id="strategy-rc" data-value="rc">rc</button><button type="button" id="strategy-patch" data-value="patch">patch</button></div>
+    </div>
+    <code class="cfg" id="cfg" aria-label=".gflow/config preview"></code>
+    <nav class="navlinks" aria-label="Sections">
+      <a href="#moments">Moments</a><a href="#release">Release</a><a href="#hotfix">Hotfix</a><a href="#rules">Contract</a>
+    </nav>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--develop)"></i>develop</span>
+    <span><i class="sw" style="background:var(--release)"></i>release/X.Y.0</span>
+    <span><i class="sw" style="background:var(--main)"></i>main</span>
+    <span><i class="sw" style="background:var(--hotfix)"></i>hotfix/X.Y.Z</span>
+    <span><i class="sw" style="background:var(--work)"></i>work branch</span>
+    <span><i class="sw" style="background:var(--version)"></i>version PR branch</span>
+    <span><span class="pill scr">set-version 1.5.0</span>script commits</span>
+    <span><span class="pill scr noop">set-version 1.4.0</span>script runs, no change</span>
+    <span><span class="pill stg">tag</span>staging</span>
+    <span><span class="pill prd">tag</span>production</span>
+    <span><span class="pill cf">conflict</span>version line conflicts</span>
+  </div>
+
+  <section id="moments">
+    <div>
+      <h2>The moments it runs</h2>
+      <p class="lede" id="moments-lede"></p>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Command</th><th>Branch</th><th>Script gets</th><th>What happens</th></tr></thead>
+        <tbody id="moments-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="release">
+    <div>
+      <h2>A release, start to finish</h2>
+      <p class="lede" id="release-lede"></p>
+    </div>
+    <div class="panel scroll"><svg data-graph="release" role="img" aria-label="Branch diagram of a release with the version script runs marked"></svg></div>
+    <div class="cols">
+      <div class="panel"><h3>Commands</h3><ol class="steps" id="release-steps"></ol></div>
+      <div class="panel scroll"><h3>State after</h3><table id="release-state"></table></div>
+    </div>
+    <p class="callout" id="release-callout"></p>
+  </section>
+
+  <section id="hotfix">
+    <div>
+      <h2>A hotfix</h2>
+      <p class="lede" id="hotfix-lede"></p>
+    </div>
+    <div class="panel scroll"><svg data-graph="hotfix" role="img" aria-label="Branch diagram of a hotfix with the version script run marked"></svg></div>
+    <div class="cols">
+      <div class="panel"><h3>Commands</h3><ol class="steps" id="hotfix-steps"></ol></div>
+      <div class="panel scroll"><h3>State after</h3><table id="hotfix-state"></table></div>
+    </div>
+    <p class="callout"><b>Hotfix created without a checkout:</b> with <code>--no-checkout</code> or the worktree flow, gflow creates <code>hotfix/1.3.1</code> without switching to it, so it cannot commit there. It skips the script and prints <code>⚠ Version script not run: hotfix/1.3.1 was created without checkout, so gflow cannot commit version files there.</code> with the manual fix: <code>git switch hotfix/1.3.1</code>, run <code>set-version.sh 1.3.1</code>, commit, push.</p>
+  </section>
+
+  <section id="rules">
+    <h2>The script contract</h2>
+    <div class="rules">
+      <div class="panel"><strong>One argument, the clean version</strong><p><code>argv[1]</code> is always <code>X.Y.Z</code>, never <code>-rc.N</code>. The working directory is the repo root of the current worktree.</p></div>
+      <div class="panel"><strong>Clean tree first</strong><p>gflow refuses to run the script on a dirty tree, so the version commit never sweeps up your own changes.</p></div>
+      <div class="panel"><strong>No change, no commit</strong><p>If the tree is still clean afterwards, gflow commits nothing. Otherwise it runs <code>git add -A</code> and commits <code>chore: set version X.Y.Z</code>.</p></div>
+      <div class="panel"><strong>Free vs protected</strong><p>Free commits straight to the branch. Protected commits straight only to a branch gflow just created; <code>develop</code> and an existing release branch get the commit through a squash-merged version PR.</p></div>
+      <div class="panel"><strong>Never at finish or sync</strong><p><code>gflow finish</code> and <code>gflow sync</code> only merge and tag. Reusing an existing release or hotfix branch never runs the script again.</p></div>
+      <div class="panel"><strong>Failures name the fix</strong><p>A non-zero exit stops with the script's stderr. A missing executable bit says <code>chmod +x</code> plus <code>git update-index --chmod=+x</code>. Only the other platform's file present is an error.</p></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const LANE = { develop: "--develop", work: "--work", release: "--release", main: "--main", hotfix: "--hotfix", version: "--version" };
+const state = { mode: "free", strategy: "rc" };
+try {
+  const saved = JSON.parse(localStorage.getItem("gflow-set-version-config") || "{}");
+  if (saved.mode === "free" || saved.mode === "protected") state.mode = saved.mode;
+  if (saved.strategy === "rc" || saved.strategy === "patch") state.strategy = saved.strategy;
+} catch (e) {}
+
+const c = s => `<code>${s}</code>`;
+const tagPill = (t, kind) => `<span class="pill ${kind}">${t}</span>`;
+const scr = (v, noop) => `<span class="pill scr${noop ? " noop" : ""}">set-version ${v}</span>`;
+
+function moments(m, s) {
+  const prot = m === "protected", patch = s === "patch";
+  const rows = [
+    [c("gflow start release"), c("release/1.4.0"), "1.4.0",
+      `<span class="how direct">Direct commit</span> on the new branch, in both modes. For a minor release this is usually ${scr("1.4.0", true)}: develop already says 1.4.0. A major release (2.0.0) does change it.`],
+    [c("gflow start release"), c("develop"), "1.5.0",
+      prot ? `<span class="how pr">Version PR</span> ${c("chore/set-version-1.5.0")} into develop, squash-merged by you. A failure here warns and keeps the release.`
+           : `<span class="how direct">Direct commit</span> on develop, pushed. A failure here warns and keeps the release.`],
+    [c("gflow bump"), c("release/1.4.0"), patch ? "1.4.1, 1.4.2, …" : "1.4.0 every time",
+      !patch ? `Same version each time, so usually ${scr("1.4.0", true)} and gflow tags the tip right away${prot ? ", without a PR" : ""}.`
+      : prot ? `<span class="how pr">Version PR</span> ${c("release-chore/1.4.0/set-version")}. The tag waits; run ${c("gflow bump")} again after the squash merge and it tags that commit.`
+             : `<span class="how direct">Direct commit</span> on the release branch, then the tag at that commit, in one run.`],
+    [c("gflow start hotfix-fix"), c("hotfix/1.3.1"), "1.3.1",
+      `<span class="how direct">Direct commit</span> on the new branch, in both modes. Skipped with a warning when the branch is created without a checkout.`],
+    [c("gflow finish") + " · " + c("gflow sync"), "any", "—",
+      `<span class="how none">Never runs.</span> The version written earlier merges along; where both sides changed the version line it ${patch ? "conflicts (see below)" : "can conflict (see below)"}.`]
+  ];
+  return rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td><code>${r[2]}</code></td><td>${r[3]}</td></tr>`).join("");
+}
+
+function stats(m, s) {
+  const prot = m === "protected", patch = s === "patch";
+  const commits = patch ? 2 : 1;
+  const prs = prot ? (patch ? 2 : 1) : 0;
+  const items = [
+    ["3", "script runs per release with one bump"],
+    [String(commits), commits === 1 ? "version commit (develop)" : "version commits (develop, release)"],
+    [String(prs), prs === 1 ? "version PR to merge" : "version PRs to merge"],
+    [patch ? "1" : "0", patch ? "version conflict at finish" : "version conflicts at finish"]
+  ];
+  return items.map(([n, l]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+}
+
+function releaseScenario(m, s) {
+  const prot = m === "protected", patch = s === "patch";
+  const steps = [], nodes = [], edges = [], lanes = [["develop", "develop"]];
+  const L = {};
+  const addLane = (kind, label) => { L[label] = lanes.length; lanes.push([kind, label]); return L[label]; };
+  L.develop = 0;
+  const vDev = prot ? addLane("version", "chore/set-version-1.5.0") : null;
+  const rel = addLane("release", "release/1.4.0");
+  const vRel = prot && patch ? addLane("version", "release-chore/1.4.0/set-version") : null;
+  const main = addLane("main", "main");
+  const startTag = patch ? ["v1.4.0", "stg"] : ["v1.4.0-rc.1", "stg"];
+
+  steps.push({ key: "start", html: `<b>${c("gflow start release --minor")}</b><div class="sub">Creates ${c("release/1.4.0")} from develop and runs ${scr("1.4.0", true)} on it: no change, develop already says 1.4.0, so no commit. Tags ${tagPill(startTag[0], "stg")} and pushes. ${prot
+    ? `Then branches ${c("chore/set-version-1.5.0")} off develop, runs ${scr("1.5.0")}, commits ${c("chore: set version 1.5.0")} and opens a PR into develop.`
+    : `Then checks out develop, runs ${scr("1.5.0")}, commits ${c("chore: set version 1.5.0")} and pushes develop.`}</div>` });
+  nodes.push({ id: "d0", lane: 0, x: 300, note: "VERSION 1.4.0" });
+  nodes.push({ id: "m0", lane: main, x: 300, note: "prod: 1.3.0" });
+  nodes.push({ id: "r1", lane: rel, x: 380, tag: startTag, step: "start", script: ["1.4.0", true] });
+  edges.push(["d0", "r1"]);
+  if (prot) {
+    nodes.push({ id: "c1", lane: vDev, x: 470, script: ["1.5.0"], note: "version commit" });
+    nodes.push({ id: "d1", lane: 0, x: 560, merge: true, step: "devpr", note: "VERSION 1.5.0" });
+    edges.push(["d0", "c1"], ["c1", "d1", 0, "version PR · squash"]);
+    steps.push({ key: "devpr", html: `<b>Squash-merge the version PR</b><div class="sub">Develop now says 1.5.0. Nothing revisits ${c("chore/set-version-1.5.0")}; enable auto-delete of head branches or delete it yourself.</div>` });
+  } else {
+    nodes.push({ id: "d1", lane: 0, x: 480, script: ["1.5.0"], note: "VERSION 1.5.0" });
+    edges.push(["d0", "d1", 1]);
+  }
+  nodes.push({ id: "r2", lane: rel, x: 650, note: "release-fix (squash)" });
+  edges.push(["r1", "r2", 1]);
+
+  let tip;
+  if (!patch) {
+    const r2 = nodes.find(n => n.id === "r2");
+    Object.assign(r2, { tag: ["v1.4.0-rc.2", "stg"], step: "bump", script: ["1.4.0", true], note: "release-fix · bump tags tip" });
+    steps.push({ key: "bump", html: `<b>${c("gflow bump")}</b><div class="sub">Under rc the script gets 1.4.0 again: ${scr("1.4.0", true)}. Nothing to commit, so gflow tags the tip ${tagPill("v1.4.0-rc.2", "stg")} straight away${prot ? ", no PR needed" : ""}.</div>` });
+    tip = "r2";
+  } else if (!prot) {
+    nodes.push({ id: "r3", lane: rel, x: 760, tag: ["v1.4.1", "prd"], step: "bump", script: ["1.4.1"], note: "chore: set version 1.4.1" });
+    edges.push(["r2", "r3", 1]);
+    steps.push({ key: "bump", html: `<b>${c("gflow bump")}</b><div class="sub">Runs ${scr("1.4.1")}, commits ${c("chore: set version 1.4.1")} on the release branch, pushes, and tags that commit ${tagPill("v1.4.1", "stg")}. One run.</div>` });
+    tip = "r3";
+  } else {
+    nodes.push({ id: "q1", lane: vRel, x: 740, step: "bump", script: ["1.4.1"], note: "version commit" });
+    nodes.push({ id: "r3", lane: rel, x: 830, merge: true, tag: ["v1.4.1", "prd"], step: "bump2", note: "tag cut on re-run" });
+    edges.push(["r2", "q1"], ["q1", "r3", 0, "version PR · squash"], ["r2", "r3", 1]);
+    steps.push({ key: "bump", html: `<b>${c("gflow bump")}</b><div class="sub">Branches ${c("release-chore/1.4.0/set-version")} off the release, runs ${scr("1.4.1")}, commits and opens a PR into ${c("release/1.4.0")}. Prints “The RC tag is deferred until this PR merges.”</div>` });
+    steps.push({ key: "bump2", html: `<b>Squash-merge it, then ${c("gflow bump")} again</b><div class="sub">Tags the PR's squash commit ${tagPill("v1.4.1", "stg")} and deletes the chore branch. It does not run the script again, so the tag cannot drift.</div>` });
+    tip = "r3";
+  }
+
+  const mx = patch && prot ? 960 : 880, dx = mx + 130;
+  nodes.push({ id: "m1", lane: main, x: mx, merge: true, tag: patch ? null : ["v1.4.0", "prd"], step: "fmain", note: patch ? "ships v1.4.1 · no new tag" : "clean tag at finish" });
+  nodes.push({ id: "d2", lane: 0, x: dx, merge: true, conflict: patch, step: patch || prot ? "fdev" : null, note: patch ? "VERSION 1.4.1 vs 1.5.0" : "keeps VERSION 1.5.0" });
+  nodes.push({ id: "x", lane: rel, x: dx + 70, gone: true, note: "deleted" });
+  edges.push([tip, "m1", 0, prot ? "landing PR · merge" : "merge"], [tip, "d2", 0, prot ? "landing PR · merge" : "merge"]);
+
+  const conflictFix = `Keep ${c("1.5.0")}, ${c("git add . && git commit --no-edit")}, ${prot ? `run ${c("gflow finish")} again; it switches back to the release branch itself.` : `${c("git switch release/1.4.0")}, run ${c("gflow finish")} again.`}`;
+  const noConflict = `No conflict: only develop changed VERSION since the branches split, so develop keeps 1.5.0.`;
+  if (!prot) {
+    steps.push({ key: "fmain", html: `<b>${c("gflow finish")}</b><div class="sub">Merges into main${patch ? `. No new tag: ${tagPill("v1.4.1", "prd")} is already the production version.` : ` and tags the merge commit ${tagPill("v1.4.0", "prd")}.`} Then merges into develop. ${patch ? "That merge stops on a conflict (next step)." : `${noConflict} Deletes the release branch.`}</div>` });
+    if (patch) steps.push({ key: "fdev", html: `<b>Resolve the develop merge</b><div class="sub">The version line conflicts: the release says 1.4.1, develop says 1.5.0. ${conflictFix} The re-run deletes the release branch.</div>` });
+  } else {
+    steps.push({ key: "fmain", html: `<b>${c("gflow finish")}</b><div class="sub">Opens the landing PR ${c("landing/release-1.4.0-into-main")} → main. Merge it with a merge commit.</div>` });
+    steps.push({ key: "fdev", html: `<b>${c("gflow finish")}</b><div class="sub">${patch ? `Re-pushes ${tagPill("v1.4.1", "prd")}; no new tag.` : `Tags the landing PR's merge commit ${tagPill("v1.4.0", "prd")}.`} Then merges develop into ${c("landing/release-1.4.0-into-develop")}. ${patch ? `That stops with the worktree on the landing branch: the release says 1.4.1, develop says 1.5.0. Resolve it there. ${conflictFix}` : noConflict} Opens the develop landing PR; merge it with a merge commit.</div>` });
+    steps.push({ key: "done", html: `<b>${c("gflow finish")}</b><div class="sub">Deletes the release branch and every ${c("landing/release-1.4.0-into-*")} branch in one push.</div>` });
+    nodes.push({ id: "ghost", lane: main, x: dx + 70, ghost: true, step: "done", note: "cleanup" });
+  }
+
+  const spans = [[0, 260, 1180], [main, 260, 1180], [rel, 380, dx + 70]];
+  if (vDev != null) spans.push([vDev, 470, 470]);
+  if (vRel != null) spans.push([vRel, 740, 740]);
+
+  const lede = `${prot ? "Protected" : "Free"} mode with ${patch ? "patch" : "rc"} bumps. The script runs three times: once on the new release branch, once for develop, once per ${c("gflow bump")}. ${patch
+    ? "Patch writes a new version on every bump, so every bump makes a version commit" + (prot ? " that goes through a PR, and the tag waits for that PR." : ".")
+    : "Rc hands the script the same 1.4.0 on every bump, so with a version-only script the bumps commit nothing" + (prot ? " and never open a PR." : ".")}`;
+
+  const rows = [
+    ["<th>Branch</th><th>State</th>"],
+    [c("main"), patch ? "Merge commit that ships 1.4.1. VERSION 1.4.1." : "Merge commit tagged v1.4.0. VERSION 1.4.0."],
+    [c("develop"), "VERSION 1.5.0, contains the release."],
+    [`<code class="gone">release/1.4.0</code>`, `<span class="muted">Deleted at finish (unless keep-release-branches=true).</span>`]
+  ];
+  if (prot) rows.push([c("chore/set-version-1.5.0"), `<span class="muted">Merged; stays on origin unless the platform auto-deletes head branches.</span>`]);
+  if (prot && patch) rows.push([`<code class="gone">release-chore/1.4.0/set-version</code>`, `<span class="muted">Deleted by the second ${c("gflow bump")}.</span>`]);
+  if (prot) rows.push([`<code class="gone">landing/release-1.4.0-into-*</code>`, `<span class="muted">Deleted at finish.</span>`]);
+  rows.push(["<th>Tags</th><th></th>"]);
+  if (patch) {
+    rows.push([tagPill("v1.4.0", "stg"), "Release branch start. Staging only."]);
+    rows.push([tagPill("v1.4.1", "prd"), prot ? "The version PR's squash commit on the release branch. Staged, then shipped." : "The version commit on the release branch. Staged, then shipped."]);
+  } else {
+    rows.push([tagPill("v1.4.0-rc.1", "stg"), "Release branch start."]);
+    rows.push([tagPill("v1.4.0-rc.2", "stg"), "Release tip after the fix."]);
+    rows.push([tagPill("v1.4.0", "prd"), prot ? "The main landing PR's merge commit." : "Main's merge commit."]);
+  }
+
+  const callout = patch
+    ? `<b>Why patch conflicts on develop:</b> every bump moves the release's version line (1.4.0 → 1.4.1), and the release cut moved develop's (1.4.0 → 1.5.0). Both sides changed the same line, so git cannot pick. gflow does not auto-resolve it: it cannot know which lines your script owns. ${prot ? `In protected mode it surfaces mid-run on ${c("landing/release-1.4.0-into-develop")}, never on the release branch.` : "In free mode it is an ordinary resumable merge conflict."}`
+    : `<b>When rc does conflict:</b> a major release. ${c("gflow start release --major")} makes the script write 2.0.0 on the release branch (a real commit) while develop moves to 2.1.0, so the develop merge at finish conflicts on the version line. ${prot ? `It surfaces on ${c("landing/release-2.0.0-into-develop")}.` : "Resolve it, commit, re-run."} A script that writes more than the version (a build number, a date) can make every bump commit too${prot ? ", and then every bump opens a version PR" : ""}.`;
+
+  return { graph: { w: 1200, lanes, nodes, edges, spans }, steps, lede, state: rows, callout };
+}
+
+function hotfixScenario(m, s) {
+  const prot = m === "protected", patch = s === "patch";
+  const lanes = [["develop", "develop"], ["main", "main"], ["hotfix", "hotfix/1.3.1"], ["work", "hotfix-fix/crash"]];
+  const nodes = [
+    { id: "d0", lane: 0, x: 300, note: "VERSION 1.4.0" },
+    { id: "m0", lane: 1, x: 300, note: "prod: 1.3.0" },
+    { id: "h1", lane: 2, x: 400, step: "start", script: ["1.3.1"], note: "chore: set version 1.3.1" },
+    { id: "f1", lane: 3, x: 510, step: "fix", note: "fix" },
+    { id: "h2", lane: 2, x: 610, merge: true, note: "fix lands (squash)" },
+    { id: "m1", lane: 1, x: 760, merge: true, tag: ["v1.3.1", "prd"], step: prot ? "fmain" : "finish", note: prot ? "landing merge commit" : "main's merge commit" },
+    { id: "d1", lane: 0, x: 910, merge: true, conflict: true, step: "fdev", note: "VERSION 1.3.1 vs 1.4.0" },
+    { id: "x", lane: 2, x: 1000, gone: true, note: "deleted" }
+  ];
+  const edges = [["m0", "h1"], ["h1", "f1"], ["f1", "h2", 0, "PR · squash"], ["h1", "h2", 1], ["h2", "m1", 0, prot ? "landing PR · merge" : "merge"], ["h2", "d1"]];
+  const steps = [
+    { key: "start", html: `<b>${c("gflow start hotfix-fix --name crash")}</b><div class="sub">The ${patch ? "latest shipped tag" : "latest version tag"} is v1.3.0, so it creates ${c("hotfix/1.3.1")} from main, runs ${scr("1.3.1")} and commits ${c("chore: set version 1.3.1")} straight on the new branch, ${prot ? "also in protected mode, " : ""}then pushes it and creates ${c("hotfix-fix/crash")}.</div>` },
+    { key: "fix", html: `<b>Commit, ${c("gflow finish")}, squash-merge, ${c("gflow finish")}</b><div class="sub">The fix lands on ${c("hotfix/1.3.1")}. No script run.</div>` }
+  ];
+  const conflict = `the version line conflicts: the hotfix says 1.3.1, develop says 1.4.0. Keep ${c("1.4.0")}, ${c("git add . && git commit --no-edit")}, ${prot ? `run ${c("gflow finish")} again; it switches back to the hotfix branch itself.` : `${c("git switch hotfix/1.3.1")}, run ${c("gflow finish")} again.`}`;
+  if (!prot) {
+    steps.push({ key: "finish", html: `<b>${c("gflow finish")} on ${c("hotfix/1.3.1")}</b><div class="sub">Merges into main and tags the merge commit ${tagPill("v1.3.1", "prd")}. Then merges into develop, where ${conflict}</div>` });
+    steps.push({ key: "fdev", html: `<b>After the re-run</b><div class="sub">Develop has the fix with VERSION 1.4.0. The hotfix branch is deleted.</div>` });
+  } else {
+    steps.push({ key: "fmain", html: `<b>${c("gflow finish")} on ${c("hotfix/1.3.1")}</b><div class="sub">Opens ${c("landing/hotfix-1.3.1-into-main")} → main. Merge it with a merge commit. Main had no other version change, so no conflict.</div>` });
+    steps.push({ key: "fdev", html: `<b>${c("gflow finish")}</b><div class="sub">Tags the landing merge commit ${tagPill("v1.3.1", "prd")}, then merges develop into ${c("landing/hotfix-1.3.1-into-develop")} and stops on that branch: ${conflict} Then merge the develop landing PR and run ${c("gflow finish")} once more to clean up.</div>` });
+  }
+  const lede = `Production runs 1.3.0 and develop already says 1.4.0. The script runs once, when gflow creates the hotfix branch, and commits there directly in both modes. ${patch ? "Under patch the version comes from the latest shipped tag, so an open release's own tags do not count." : "Under rc the version comes from the latest version tag."}`;
+  const rows = [
+    ["<th>Branch</th><th>State</th>"],
+    [c("main"), "Merge commit tagged v1.3.1. VERSION 1.3.1."],
+    [c("develop"), "Contains the fix. VERSION 1.4.0 after the conflict resolution."],
+    [`<code class="gone">hotfix/1.3.1</code>`, `<span class="muted">Deleted at finish (unless keep-release-branches=true).</span>`],
+    [`<code class="gone">hotfix-fix/crash</code>`, `<span class="muted">Deleted.</span>`],
+    ["<th>Tags</th><th></th>"],
+    [tagPill("v1.3.1", "prd"), prot ? "The main landing PR's merge commit." : "Main's merge commit."]
+  ];
+  return { graph: { w: 1080, lanes, nodes, edges, spans: [[0, 260, 1060], [1, 260, 1060], [2, 400, 1000], [3, 510, 510]] }, steps, lede, state: rows };
+}
+
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) if (attrs[k] !== "" && attrs[k] != null) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  parent.appendChild(e); return e;
+}
+function draw(svg, g, stepNo) {
+  svg.textContent = "";
+  const top = 92, gap = 136, h = top + gap * (g.lanes.length - 1) + 80;
+  svg.setAttribute("viewBox", `0 0 ${g.w} ${h}`);
+  svg.style.minWidth = Math.round(g.w * 0.82) + "px";
+  const y = l => top + l * gap;
+  const col = l => `var(${LANE[g.lanes[l][0]]})`;
+  const byId = Object.fromEntries(g.nodes.map(n => [n.id, n]));
+  const lanesG = el("g", {}, svg), edgesG = el("g", {}, svg), nodesG = el("g", {}, svg);
+  g.lanes.forEach(([k, label], l) => {
+    el("text", { x: 12, y: y(l) + 4, style: `fill:${col(l)};font-family:var(--font-mono);font-size:12.5px;font-weight:500` }, svg, label);
+  });
+  g.spans.forEach(([l, x1, x2]) => {
+    if (x2 > x1) el("line", { x1, y1: y(l), x2, y2: y(l), "stroke-width": 3, style: `stroke:${col(l)}` }, lanesG);
+  });
+  g.edges.forEach(([a, b, same, label]) => {
+    const A = byId[a], B = byId[b];
+    if (same) {
+      el("line", { x1: A.x, y1: y(A.lane), x2: B.x, y2: y(B.lane), "stroke-width": 3, style: `stroke:${col(A.lane)}` }, edgesG);
+      return;
+    }
+    const ya = y(A.lane), yb = y(B.lane), mx = (A.x + B.x) / 2;
+    el("path", { d: `M${A.x},${ya} C${mx},${ya} ${mx},${yb} ${B.x},${yb}`, fill: "none", "stroke-width": 2.5, style: `stroke:${col(A.lane)}` }, edgesG);
+    if (label) {
+      const t = el("text", { x: mx, y: (ya + yb) / 2 - 6, "text-anchor": "middle", style: "fill:var(--muted);font-size:11px;paint-order:stroke;stroke:var(--surface);stroke-width:4px" }, edgesG, label);
+    }
+  });
+  g.nodes.forEach(n => {
+    const cx = n.x, cy = y(n.lane), cl = col(n.lane);
+    if (n.conflict) el("circle", { cx, cy, r: 15, "stroke-width": 2, "stroke-dasharray": "3 3", style: "fill:var(--warn-bg);stroke:var(--warn)" }, nodesG);
+    if (n.gone) {
+      el("text", { x: cx, y: cy + 6, "text-anchor": "middle", style: `fill:${cl};font-size:20px;font-weight:600` }, nodesG, "✕");
+    } else if (n.ghost) {
+      el("circle", { cx, cy, r: 6, "stroke-width": 2, "stroke-dasharray": "2 2", style: `fill:var(--surface);stroke:${cl}` }, nodesG);
+    } else if (n.tag) {
+      const fill = n.tag[1] === "prd" ? "var(--prod)" : "var(--staging)";
+      el("rect", { x: cx - 7, y: cy - 7, width: 14, height: 14, transform: `rotate(45 ${cx} ${cy})`, "stroke-width": 3, style: `fill:${fill};stroke:${cl}` }, nodesG);
+    } else {
+      el("circle", { cx, cy, r: n.merge ? 8 : 7, "stroke-width": 3, style: `fill:${n.merge ? cl : "var(--surface)"};stroke:${cl}` }, nodesG);
+    }
+    if (n.tag) {
+      const prd = n.tag[1] === "prd", w = n.tag[0].length * 7.4 + 18;
+      el("rect", { x: cx - w / 2, y: cy - 42, width: w, height: 21, rx: 10.5, style: `fill:var(${prd ? "--prod-bg" : "--staging-bg"})` }, nodesG);
+      el("text", { x: cx, y: cy - 27.5, "text-anchor": "middle", style: `fill:var(${prd ? "--prod" : "--staging"});font-family:var(--font-mono);font-size:12px;font-weight:500` }, nodesG, n.tag[0]);
+    }
+    const num = n.step ? stepNo[n.step] : null;
+    if (num) {
+      const sy = n.tag ? cy - 56 : cy - 28;
+      el("circle", { cx, cy: sy, r: 10, style: "fill:var(--fg)" }, nodesG);
+      el("text", { x: cx, y: sy + 4, "text-anchor": "middle", style: "fill:var(--surface);font-size:11px;font-weight:600" }, nodesG, num);
+    }
+    let below = cy + 30;
+    if (n.script) {
+      const [v, noop] = n.script, label = `set-version ${v}`, w = label.length * 6.9 + 18;
+      el("rect", { x: cx - w / 2, y: cy + 14, width: w, height: 20, rx: 10, "stroke-width": 1.2, "stroke-dasharray": noop ? "3 3" : "",
+        style: `fill:var(${noop ? "--surface" : "--script-bg"});stroke:var(--script)` }, nodesG);
+      el("text", { x: cx, y: cy + 28, "text-anchor": "middle", style: "fill:var(--script);font-family:var(--font-mono);font-size:11px;font-weight:500" }, nodesG, label);
+      below = cy + 52;
+    }
+    if (n.note) el("text", { x: cx, y: below, "text-anchor": "middle", style: `fill:var(${n.conflict ? "--warn" : "--muted"});font-size:11.5px;font-weight:${n.conflict ? 600 : 400}` }, nodesG, n.note);
+  });
+  el("text", { x: g.w - 16, y: h - 8, "text-anchor": "end", style: "fill:var(--muted);font-size:11px" }, svg, "time →");
+}
+
+function renderSteps(ol, steps) {
+  ol.innerHTML = steps.map(st => `<li><div>${st.html}</div></li>`).join("");
+  return Object.fromEntries(steps.map((st, i) => [st.key, i + 1]));
+}
+function renderState(table, rows) {
+  table.innerHTML = rows.map(r => r.length === 1 ? `<tr>${r[0]}</tr>` : `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+}
+
+function render() {
+  const { mode: m, strategy: s } = state;
+  document.querySelectorAll(".seg").forEach(seg => {
+    const key = seg.dataset.key;
+    seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.value === state[key])));
+  });
+  document.getElementById("cfg").textContent = `.gflow/config  mode=${m}  bump-strategy=${s}`;
+  document.getElementById("moments-lede").innerHTML = m === "protected"
+    ? `In protected mode gflow never pushes ${c("develop")} or an existing release branch with a version commit. Those go through a version PR you squash-merge; only a branch gflow has just created gets the commit directly.`
+    : `In free mode every version commit goes straight onto its branch and is pushed in the same run.`;
+  document.getElementById("stats").innerHTML = stats(m, s);
+  document.getElementById("moments-body").innerHTML = moments(m, s);
+
+  const r = releaseScenario(m, s);
+  document.getElementById("release-lede").innerHTML = r.lede;
+  draw(document.querySelector('svg[data-graph="release"]'), r.graph, renderSteps(document.getElementById("release-steps"), r.steps));
+  renderState(document.getElementById("release-state"), r.state);
+  document.getElementById("release-callout").innerHTML = r.callout;
+
+  const hf = hotfixScenario(m, s);
+  document.getElementById("hotfix-lede").innerHTML = hf.lede;
+  draw(document.querySelector('svg[data-graph="hotfix"]'), hf.graph, renderSteps(document.getElementById("hotfix-steps"), hf.steps));
+  renderState(document.getElementById("hotfix-state"), hf.state);
+}
+
+document.querySelectorAll(".seg").forEach(seg => seg.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  state[seg.dataset.key] = b.dataset.value;
+  try { localStorage.setItem("gflow-set-version-config", JSON.stringify(state)); } catch (err) {}
+  render();
+}));
+render();
+</script>
+</body>
+</html>
