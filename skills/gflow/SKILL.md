@@ -10,7 +10,7 @@ description: ALWAYS load this skill before ANY git branch operation — creating
 Applies when the repo has a `.gflow/` directory, or the user asks for gflow.
 Neither → not a gflow repo; use normal git, this skill does not apply.
 
-**Minimum gflow version: 4.1.0.** In a gflow repo, run `gflow --version` once
+**Minimum gflow version: 5.0.0.** In a gflow repo, run `gflow --version` once
 before the first gflow command of a session:
 
 - **Not found** → tell the user to install gflow, then stop. Do **not** fall
