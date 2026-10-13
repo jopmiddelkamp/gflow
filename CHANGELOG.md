@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-10-13
+
+### Changed
+- `gflow finish` on a work branch no longer offers branches that your branch left before it left `develop` as PR targets. A PR into such a branch would also carry `develop`'s commits, so it cannot be the parent. In a repo full of stale branches the "PR target branch" menu shrinks from dozens of entries to `develop` plus real stacked parents, and when only `develop` is left it is picked without a menu. Branches that forked from the same `develop` commit as yours are still offered. Use `--base` to target anything else.
+
 ## [5.0.0] - 2026-10-12
 
 ### Added
@@ -288,6 +293,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-platform CI/CD with GitHub Actions (macOS x86_64, macOS ARM64, Windows)
 - README with mermaid diagrams documenting the branch model and workflows
 
+[5.1.0]: https://github.com/jopmiddelkamp/gflow/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.6.0...v5.0.0
 [4.6.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.5.0...v4.6.0
 [4.5.0]: https://github.com/jopmiddelkamp/gflow/compare/v4.4.0...v4.5.0

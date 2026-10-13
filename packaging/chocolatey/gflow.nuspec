@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>gflow</id>
-    <version>5.0.0</version>
+    <version>5.1.0</version>
     <title>gflow - a customized gitflow workflow CLI</title>
     <authors>Jop Middelkamp</authors>
     <copyright>Copyright 2026 Jop Middelkamp</copyright>
