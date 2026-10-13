@@ -348,6 +348,47 @@ fn parent_detection_excludes_child_branches_and_skips_menu_for_single_candidate(
 }
 
 #[test]
+fn branches_we_forked_from_before_develop_are_not_offered() {
+    let mut git = MockGit::new();
+    git.current_branch = "feature/new".to_string();
+    git.remote_branches = vec![
+        "develop".to_string(),
+        "feature/stale".to_string(),
+        "chore/ancient".to_string(),
+    ];
+    // Our history left develop 3 commits ago but these branches 15 and 40
+    // commits ago: a PR into them would carry develop's commits too.
+    add_candidate(&mut git, "feature/new", "develop", "base-d", 3, 0);
+    add_candidate(&mut git, "feature/new", "feature/stale", "base-s", 15, 2);
+    add_candidate(&mut git, "feature/new", "chore/ancient", "base-a", 40, 1);
+    let hosting = MockHosting::new();
+    let prompter = MockPrompter::new(); // unscripted: any select would error
+    let branch_type = BranchType::Feature { name: "new".to_string() };
+
+    finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
+
+    assert!(prompter.calls().is_empty(), "develop must be the only candidate left");
+    assert!(hosting.calls()[1].starts_with("create_or_get_pr:feature/new:develop:"),
+        "got: {}", hosting.calls()[1]);
+}
+
+#[test]
+fn without_develop_every_candidate_is_offered() {
+    let mut git = MockGit::new();
+    git.current_branch = "feature/new".to_string();
+    git.remote_branches = vec!["feature/near".to_string(), "feature/far".to_string()];
+    add_candidate(&mut git, "feature/new", "feature/near", "base-n", 2, 0);
+    add_candidate(&mut git, "feature/new", "feature/far", "base-f", 9, 0);
+    let hosting = MockHosting::new();
+    let prompter = MockPrompter::scripted(&[1]);
+    let branch_type = BranchType::Feature { name: "new".to_string() };
+
+    finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
+
+    assert_eq!(prompter.calls(), vec!["select:PR target branch:[feature/near, feature/far]"]);
+}
+
+#[test]
 fn busy_develop_stays_a_candidate_even_when_far_ahead_of_us() {
     let mut git = MockGit::new();
     git.current_branch = "refactor/cleanup".to_string();
@@ -359,18 +400,18 @@ fn busy_develop_stays_a_candidate_even_when_far_ahead_of_us() {
     // is large, its own is small — the shape that used to out-rank develop.
     add_candidate(&mut git, "refactor/cleanup", "feature/sibling", "base-s", 15, 2);
     let hosting = MockHosting::new();
-    let prompter = MockPrompter::scripted(&[0]);
+    let prompter = MockPrompter::new(); // unscripted: any select would error
     let branch_type = BranchType::Refactor { name: "cleanup".to_string() };
 
     finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
 
-    assert_eq!(prompter.calls(), vec!["select:PR target branch:[develop, feature/sibling]"]);
+    assert!(prompter.calls().is_empty(), "the sibling is further away than develop");
     assert!(hosting.calls()[1].starts_with("create_or_get_pr:refactor/cleanup:develop:"),
-        "develop must be selectable as PR target, got: {}", hosting.calls()[1]);
+        "develop must be the PR target, got: {}", hosting.calls()[1]);
 }
 
 #[test]
-fn develop_is_offered_even_when_it_already_contains_our_tip() {
+fn develop_stays_the_target_even_when_it_already_contains_our_tip() {
     let mut git = MockGit::new();
     git.current_branch = "fix/already-merged".to_string();
     git.remote_branches = vec!["develop".to_string(), "feature/sibling".to_string()];
@@ -380,12 +421,14 @@ fn develop_is_offered_even_when_it_already_contains_our_tip() {
     add_candidate(&mut git, "fix/already-merged", "develop", "our-tip", 0, 5);
     add_candidate(&mut git, "fix/already-merged", "feature/sibling", "base-s", 4, 1);
     let hosting = MockHosting::new();
-    let prompter = MockPrompter::scripted(&[0]);
+    let prompter = MockPrompter::new(); // unscripted: any select would error
     let branch_type = BranchType::Fix { name: "already-merged".to_string() };
 
     finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
 
-    assert_eq!(prompter.calls(), vec!["select:PR target branch:[develop, feature/sibling]"]);
+    assert!(prompter.calls().is_empty(), "the sibling is further away than develop");
+    assert!(hosting.calls()[1].starts_with("create_or_get_pr:fix/already-merged:develop:"),
+        "develop must stay the PR target, got: {}", hosting.calls()[1]);
 }
 
 #[test]
