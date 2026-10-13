@@ -142,6 +142,12 @@ fn detect_parent_branch(git: &dyn Git, prompter: &dyn Prompter, current: &str) -
         candidates.push((branch, current_count));
     }
 
+    // A branch our history left before it left develop cannot be our parent:
+    // a PR into it would carry develop's commits as well.
+    if let Some(develop_distance) = candidates.iter().find(|(name, _)| name == "develop").map(|&(_, d)| d) {
+        candidates.retain(|&(_, distance)| distance <= develop_distance);
+    }
+
     if candidates.is_empty() {
         return Ok("develop".to_string());
     }
