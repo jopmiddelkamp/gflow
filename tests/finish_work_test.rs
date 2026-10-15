@@ -253,7 +253,7 @@ fn parent_detection_reads_every_branch_in_one_query() {
         divergence("feature/stacked", 6, 0),
         divergence("feature/child", 0, 0),
         divergence("release/1.0.0", 0, 1),
-        divergence("chore/set-version-1.2.0", 0, 1),
+        divergence("version/1.2.0", 0, 1),
     ]);
     let hosting = MockHosting::new();
     let prompter = MockPrompter::scripted(&[0]);
@@ -432,13 +432,13 @@ fn develop_stays_the_target_even_when_it_already_contains_our_tip() {
 }
 
 #[test]
-fn machine_owned_chore_set_version_branch_is_never_offered_as_pr_target() {
-    // chore/set-version-* branches are gflow-created and get merged/deleted by
+fn machine_owned_version_branch_is_never_offered_as_pr_target() {
+    // version/* branches are gflow-created and get merged/deleted by
     // a protected-mode version bump; targeting one as a PR base would strand
     // the PR when that branch disappears out from under it.
     let mut git = MockGit::new();
     git.current_branch = "feature/login".to_string();
-    git.remote_branches = vec!["chore/set-version-1.2.0".to_string(), "develop".to_string()];
+    git.remote_branches = vec!["version/1.2.0".to_string(), "develop".to_string()];
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new(); // unscripted: any select would error
     let branch_type = BranchType::Feature { name: "login".to_string() };
@@ -446,9 +446,9 @@ fn machine_owned_chore_set_version_branch_is_never_offered_as_pr_target() {
     finish_work_branch(&git, &hosting, &prompter, &branch_type, Some(false), None, None, false).unwrap();
 
     assert!(prompter.calls().is_empty(),
-        "chore/set-version-* must be filtered, leaving develop as the sole/auto candidate");
+        "version/* must be filtered, leaving develop as the sole/auto candidate");
     assert!(hosting.calls()[1].starts_with("create_or_get_pr:feature/login:develop:"),
-        "chore/set-version-1.2.0 must never be offered as a PR target, got: {}", hosting.calls()[1]);
+        "version/1.2.0 must never be offered as a PR target, got: {}", hosting.calls()[1]);
 }
 
 // --- Already-merged PR: finish is complete, clean up instead of a new PR ---

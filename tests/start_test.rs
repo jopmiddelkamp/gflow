@@ -861,20 +861,20 @@ fn m2_protected_mode_opens_a_version_pr_on_a_fresh_branch() {
         "push_tag:v1.1.0-rc.1",
         "checkout:develop",
         "ff_merge:origin/develop",
-        "remote_branch_exists:chore/set-version-1.2.0",
-        "local_branch_exists:chore/set-version-1.2.0",
-        "create_branch:chore/set-version-1.2.0:develop",
+        "remote_branch_exists:version/1.2.0",
+        "local_branch_exists:version/1.2.0",
+        "create_branch:version/1.2.0:develop",
         "is_working_tree_clean",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.2.0",
-        "push:chore/set-version-1.2.0",
+        "push:version/1.2.0",
         "checkout:release/1.1.0",
     ]);
     assert!(!git.calls().contains(&"push:develop".to_string()),
         "protected mode must never push develop directly; calls: {:?}", git.calls());
     assert_eq!(hosting.calls(), vec![
-        "create_or_get_pr:chore/set-version-1.2.0:develop:chore: set version 1.2.0",
+        "create_or_get_pr:version/1.2.0:develop:chore: set version 1.2.0",
         "copy_text:chore: set version 1.2.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -882,7 +882,7 @@ fn m2_protected_mode_opens_a_version_pr_on_a_fresh_branch() {
 }
 
 #[test]
-fn m2_protected_mode_noop_deletes_the_fresh_chore_branch() {
+fn m2_protected_mode_noop_deletes_the_fresh_version_branch() {
     let mut git = MockGit::new();
     git.branches_matching = vec![];
     git.tags = vec!["v1.0.0".to_string()];
@@ -908,13 +908,13 @@ fn m2_protected_mode_noop_deletes_the_fresh_chore_branch() {
         "push_tag:v1.1.0-rc.1",
         "checkout:develop",
         "ff_merge:origin/develop",
-        "remote_branch_exists:chore/set-version-1.2.0",
-        "local_branch_exists:chore/set-version-1.2.0",
-        "create_branch:chore/set-version-1.2.0:develop",
+        "remote_branch_exists:version/1.2.0",
+        "local_branch_exists:version/1.2.0",
+        "create_branch:version/1.2.0:develop",
         "is_working_tree_clean",
         "is_working_tree_clean",
         "checkout:develop",
-        "delete_branch_local:chore/set-version-1.2.0",
+        "delete_branch_local:version/1.2.0",
         "checkout:release/1.1.0",
     ]);
     assert!(hosting.calls().is_empty(), "a no-op version bump must never open a PR; calls: {:?}", hosting.calls());
@@ -922,12 +922,12 @@ fn m2_protected_mode_noop_deletes_the_fresh_chore_branch() {
 }
 
 #[test]
-fn m2_protected_mode_reuses_a_leftover_chore_branch_without_recreating_it() {
+fn m2_protected_mode_reuses_a_leftover_version_branch_without_recreating_it() {
     let mut git = MockGit::new();
     git.branches_matching = vec![];
     git.tags = vec!["v1.0.0".to_string()];
     git.working_tree_clean_seq.borrow_mut().extend([true, false]);
-    git.existing_remote_branches.insert("chore/set-version-1.2.0".to_string());
+    git.existing_remote_branches.insert("version/1.2.0".to_string());
     let script = MockVersionScript::new();
     let hosting = MockHosting::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
@@ -949,13 +949,13 @@ fn m2_protected_mode_reuses_a_leftover_chore_branch_without_recreating_it() {
         "push_tag:v1.1.0-rc.1",
         "checkout:develop",
         "ff_merge:origin/develop",
-        "remote_branch_exists:chore/set-version-1.2.0",
+        "remote_branch_exists:version/1.2.0",
         "checkout:release/1.1.0",
     ]);
     assert!(!git.calls().iter().any(|c| c.starts_with("create_branch:chore")),
         "a leftover remote branch must be reused, never recreated; calls: {:?}", git.calls());
     assert_eq!(hosting.calls(), vec![
-        "create_or_get_pr:chore/set-version-1.2.0:develop:chore: set version 1.2.0",
+        "create_or_get_pr:version/1.2.0:develop:chore: set version 1.2.0",
         "copy_text:chore: set version 1.2.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -963,15 +963,15 @@ fn m2_protected_mode_reuses_a_leftover_chore_branch_without_recreating_it() {
 }
 
 #[test]
-fn bump_develop_protected_deletes_leftover_local_chore_branch_before_recreating() {
+fn bump_develop_protected_deletes_leftover_local_version_branch_before_recreating() {
     // Mirrors bump_protected's own leftover-local fix (finish_release.rs): a
-    // prior M2 run can leave chore/set-version-{dev} behind locally only, and
+    // prior M2 run can leave version/{dev} behind locally only, and
     // re-running must not die on git's raw "branch already exists".
     let mut git = MockGit::new();
     git.branches_matching = vec![];
     git.tags = vec!["v1.0.0".to_string()];
     git.working_tree_clean_seq.borrow_mut().extend([true, false, true, false]);
-    git.existing_local_branches.insert("chore/set-version-1.2.0".to_string());
+    git.existing_local_branches.insert("version/1.2.0".to_string());
     let script = MockVersionScript::new();
     let hosting = MockHosting::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
@@ -993,19 +993,19 @@ fn bump_develop_protected_deletes_leftover_local_chore_branch_before_recreating(
         "push_tag:v1.1.0-rc.1",
         "checkout:develop",
         "ff_merge:origin/develop",
-        "remote_branch_exists:chore/set-version-1.2.0",
-        "local_branch_exists:chore/set-version-1.2.0",
-        "delete_branch_local:chore/set-version-1.2.0",
-        "create_branch:chore/set-version-1.2.0:develop",
+        "remote_branch_exists:version/1.2.0",
+        "local_branch_exists:version/1.2.0",
+        "delete_branch_local:version/1.2.0",
+        "create_branch:version/1.2.0:develop",
         "is_working_tree_clean",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.2.0",
-        "push:chore/set-version-1.2.0",
+        "push:version/1.2.0",
         "checkout:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
-        "create_or_get_pr:chore/set-version-1.2.0:develop:chore: set version 1.2.0",
+        "create_or_get_pr:version/1.2.0:develop:chore: set version 1.2.0",
         "copy_text:chore: set version 1.2.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
     ]);
@@ -1043,9 +1043,9 @@ fn bump_develop_protected_script_failure_restores_to_develop_then_release_branch
         "push_tag:v1.1.0-rc.1",
         "checkout:develop",
         "ff_merge:origin/develop",
-        "remote_branch_exists:chore/set-version-1.2.0",
-        "local_branch_exists:chore/set-version-1.2.0",
-        "create_branch:chore/set-version-1.2.0:develop",
+        "remote_branch_exists:version/1.2.0",
+        "local_branch_exists:version/1.2.0",
+        "create_branch:version/1.2.0:develop",
         "is_working_tree_clean",
         "checkout:develop",
         "checkout:release/1.1.0",
@@ -2021,18 +2021,18 @@ fn protected_develop_bump_failures_preserve_the_release_and_restore_its_checkout
         ..RepoConfig::default()
     };
     for (call, occurrence, changed) in [
-        ("remote_branch_exists:chore/set-version-1.2.0", 1, true),
-        ("local_branch_exists:chore/set-version-1.2.0", 1, true),
-        ("delete_branch_local:chore/set-version-1.2.0", 1, true),
-        ("create_branch:chore/set-version-1.2.0:develop", 1, true),
+        ("remote_branch_exists:version/1.2.0", 1, true),
+        ("local_branch_exists:version/1.2.0", 1, true),
+        ("delete_branch_local:version/1.2.0", 1, true),
+        ("create_branch:version/1.2.0:develop", 1, true),
         ("is_working_tree_clean", 3, true),
-        ("push:chore/set-version-1.2.0", 1, true),
+        ("push:version/1.2.0", 1, true),
         ("checkout:develop", 3, false),
-        ("delete_branch_local:chore/set-version-1.2.0", 2, false),
+        ("delete_branch_local:version/1.2.0", 2, false),
     ] {
         let mut git = release_git();
         git.existing_local_branches
-            .insert("chore/set-version-1.2.0".into());
+            .insert("version/1.2.0".into());
         *git.working_tree_clean_seq.borrow_mut() = [true, false, true, !changed].into();
         git.fail_call = Some((call.into(), occurrence));
         let hosting = MockHosting::new();
@@ -2075,11 +2075,11 @@ fn protected_develop_pr_failure_preserves_the_release_for_new_and_reused_version
         let mut git = release_git();
         if remote_exists {
             git.existing_remote_branches
-                .insert("chore/set-version-1.2.0".into());
+                .insert("version/1.2.0".into());
         }
         let mut hosting = MockHosting::new();
         hosting.fail_call = Some((
-            "create_or_get_pr:chore/set-version-1.2.0:develop:chore: set version 1.2.0".into(),
+            "create_or_get_pr:version/1.2.0:develop:chore: set version 1.2.0".into(),
             1,
         ));
         start_release(

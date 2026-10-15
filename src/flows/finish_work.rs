@@ -88,14 +88,13 @@ fn pr_title(commit_type: &str, breaking: bool, name: &str) -> String {
 }
 
 /// Develop and work branches are candidate parents — decided by the taxonomy
-/// in BranchType, not a local prefix list. chore/set-version-* is gflow-created
-/// and machine-owned: a protected version bump merges and deletes it, which
-/// would strand a PR that targeted it as a base.
+/// in BranchType, not a local prefix list. The gflow-created `version/*`
+/// branches are not work branches, so a PR never targets one that a protected
+/// version bump merges and deletes.
 fn is_parent_candidate(branch: &str, current: &str) -> bool {
     let parsed = BranchType::parse(branch);
     branch != current
         && (parsed == BranchType::Develop || parsed.is_work_branch())
-        && !branch.starts_with("chore/set-version-")
 }
 
 /// `(branch, commits only on current, commits only on branch)` for every

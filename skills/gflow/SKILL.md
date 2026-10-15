@@ -142,7 +142,7 @@ Config is three layers, later overriding earlier per key: `~/.gflow/config` (you
 
 **Version script** (`.gflow/set-version.sh` / `.gflow/set-version.cmd`, platform-picked; both missing = feature off): runs with the clean `X.Y.Z` at release/hotfix branch creation, the post-release develop bump, and `bump`; commits `chore: set version {v}` only if it changed files. Requires a clean tree first. Under `bump-strategy=patch` each `bump` passes the **newly incremented** `X.Y.Z` (so the script commits every bump); under `rc` it gets the constant `X.Y.0`.
 
-`chore/set-version-{v}` and `release-chore/{v}/set-version` are **gflow-created** — merge their PR, never commit to them. `chore/set-version-*` is also excluded from `finish`'s PR-target candidates (it gets merged and deleted out from under a PR that targeted it). A `release-chore/*` branch finishes like `release-fix` (PR into its release branch, no `--base`).
+`version/{v}` and `release-chore/{v}/set-version` are **gflow-created** — merge their PR, never commit to them. `version/*` is never a `finish` PR-target candidate (it gets merged and deleted out from under a PR that targeted it). A `release-chore/*` branch finishes like `release-fix` (PR into its release branch, no `--base`).
 
 **Papercut**: version files can conflict on merge (hotfix vs. develop, major release vs. develop) — resolve manually, gflow does not auto-resolve. In protected mode it surfaces while gflow merges the target into the `landing/*` branch: resolve there mid-run, never on the source branch.
 

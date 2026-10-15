@@ -193,7 +193,7 @@ function moments(m, s) {
     [c("gflow start release"), c("release/1.4.0"), "1.4.0",
       `<span class="how direct">Direct commit</span> on the new branch, in both modes. For a minor release this is usually ${scr("1.4.0", true)}: develop already says 1.4.0. A major release (2.0.0) does change it.`],
     [c("gflow start release"), c("develop"), "1.5.0",
-      prot ? `<span class="how pr">Version PR</span> ${c("chore/set-version-1.5.0")} into develop, squash-merged by you. A failure here warns and keeps the release.`
+      prot ? `<span class="how pr">Version PR</span> ${c("version/1.5.0")} into develop, squash-merged by you. A failure here warns and keeps the release.`
            : `<span class="how direct">Direct commit</span> on develop, pushed. A failure here warns and keeps the release.`],
     [c("gflow bump"), c("release/1.4.0"), patch ? "1.4.1, 1.4.2, …" : "1.4.0 every time",
       !patch ? `Same version each time, so usually ${scr("1.4.0", true)} and gflow tags the tip right away${prot ? ", without a PR" : ""}.`
@@ -226,14 +226,14 @@ function releaseScenario(m, s) {
   const L = {};
   const addLane = (kind, label) => { L[label] = lanes.length; lanes.push([kind, label]); return L[label]; };
   L.develop = 0;
-  const vDev = prot ? addLane("version", "chore/set-version-1.5.0") : null;
+  const vDev = prot ? addLane("version", "version/1.5.0") : null;
   const rel = addLane("release", "release/1.4.0");
   const vRel = prot && patch ? addLane("version", "release-chore/1.4.0/set-version") : null;
   const main = addLane("main", "main");
   const startTag = patch ? ["v1.4.0", "stg"] : ["v1.4.0-rc.1", "stg"];
 
   steps.push({ key: "start", html: `<b>${c("gflow start release --minor")}</b><div class="sub">Creates ${c("release/1.4.0")} from develop and runs ${scr("1.4.0", true)} on it: no change, develop already says 1.4.0, so no commit. Tags ${tagPill(startTag[0], "stg")} and pushes. ${prot
-    ? `Then branches ${c("chore/set-version-1.5.0")} off develop, runs ${scr("1.5.0")}, commits ${c("chore: set version 1.5.0")} and opens a PR into develop.`
+    ? `Then branches ${c("version/1.5.0")} off develop, runs ${scr("1.5.0")}, commits ${c("chore: set version 1.5.0")} and opens a PR into develop.`
     : `Then checks out develop, runs ${scr("1.5.0")}, commits ${c("chore: set version 1.5.0")} and pushes develop.`}</div>` });
   nodes.push({ id: "d0", lane: 0, x: 300, note: "VERSION 1.4.0" });
   nodes.push({ id: "m0", lane: main, x: 300, note: "prod: 1.3.0" });
@@ -243,7 +243,7 @@ function releaseScenario(m, s) {
     nodes.push({ id: "c1", lane: vDev, x: 470, script: ["1.5.0"], note: "version commit" });
     nodes.push({ id: "d1", lane: 0, x: 560, merge: true, step: "devpr", note: "VERSION 1.5.0" });
     edges.push(["d0", "c1"], ["c1", "d1", 0, "version PR · squash"]);
-    steps.push({ key: "devpr", html: `<b>Squash-merge the version PR</b><div class="sub">Develop now says 1.5.0. Nothing revisits ${c("chore/set-version-1.5.0")}; enable auto-delete of head branches or delete it yourself.</div>` });
+    steps.push({ key: "devpr", html: `<b>Squash-merge the version PR</b><div class="sub">Develop now says 1.5.0. Nothing revisits ${c("version/1.5.0")}; enable auto-delete of head branches or delete it yourself.</div>` });
   } else {
     nodes.push({ id: "d1", lane: 0, x: 480, script: ["1.5.0"], note: "VERSION 1.5.0" });
     edges.push(["d0", "d1", 1]);
@@ -303,7 +303,7 @@ function releaseScenario(m, s) {
     [c("develop"), "VERSION 1.5.0, contains the release."],
     [`<code class="gone">release/1.4.0</code>`, `<span class="muted">Deleted at finish (unless keep-release-branches=true).</span>`]
   ];
-  if (prot) rows.push([c("chore/set-version-1.5.0"), `<span class="muted">Merged; stays on origin unless the platform auto-deletes head branches.</span>`]);
+  if (prot) rows.push([c("version/1.5.0"), `<span class="muted">Merged; stays on origin unless the platform auto-deletes head branches.</span>`]);
   if (prot && patch) rows.push([`<code class="gone">release-chore/1.4.0/set-version</code>`, `<span class="muted">Deleted by the second ${c("gflow bump")}.</span>`]);
   if (prot) rows.push([`<code class="gone">landing/release-1.4.0-into-*</code>`, `<span class="muted">Deleted at finish.</span>`]);
   rows.push(["<th>Tags</th><th></th>"]);

@@ -758,16 +758,16 @@ Make it executable: chmod +x .gflow/set-version.sh && git update-index --chmod=+
 
 `git update-index --chmod=+x` is there because git tracks the executable bit itself — a local `chmod +x` alone doesn't survive a fresh clone. This differs from the platform-mismatch error above in *when* it can fire: platform mismatch is resolved eagerly, once, at the start of every command, so it fires no matter what you run; a not-executable script is only ever spawned by the commands that actually run it (cutting a release/hotfix branch, `gflow bump`) — that asymmetry can be surprising the first time you hit it.
 
-#### `chore/set-version-*` and `release-chore/*/set-version` branches
+#### `version/*` and `release-chore/*/set-version` branches
 
 In protected mode, a version commit that can't land directly goes out as its own PR from a branch gflow creates:
 
-- `chore/set-version-X.Y.Z` — the develop version bump that follows a release cut.
+- `version/X.Y.Z` — the develop version bump that follows a release cut.
 - `release-chore/X.Y.0/set-version` — a version bump needed on an already-pushed release branch (during `gflow bump`).
 
 **gflow creates and manages these — merge the PR, don't commit to them yourself.** If a human needs to intervene on a `release-chore/*` branch, it finishes exactly like a `release-fix` branch (`gflow finish` from it opens/updates a PR into its release branch); it has no `--base` flag, same as `release-fix`/`hotfix-fix`.
 
-`gflow bump` deletes the `release-chore/*/set-version` branch itself the next time it revisits it, but nothing ever revisits `chore/set-version-*` after its PR merges, so it stays on the remote. Enable your hosting platform's automatic head-branch deletion (GitHub: "Automatically delete head branches"; Azure DevOps: the branch policy's auto-complete deletion option) to avoid the buildup, or delete it by hand.
+`gflow bump` deletes the `release-chore/*/set-version` branch itself the next time it revisits it, but nothing ever revisits `version/*` after its PR merges, so it stays on the remote. Enable your hosting platform's automatic head-branch deletion (GitHub: "Automatically delete head branches"; Azure DevOps: the branch policy's auto-complete deletion option) to avoid the buildup, or delete it by hand.
 
 #### Deferred RC tags
 
