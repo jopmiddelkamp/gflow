@@ -88,14 +88,13 @@ fn pr_title(commit_type: &str, breaking: bool, name: &str) -> String {
 }
 
 /// Develop and work branches are candidate parents — decided by the taxonomy
-/// in BranchType, not a local prefix list. chore/set-version-* is gflow-created
-/// and machine-owned: a protected version bump merges and deletes it, which
-/// would strand a PR that targeted it as a base.
+/// in BranchType, not a local prefix list. The gflow-created `version/*`
+/// branches are not work branches, so a PR never targets one that a protected
+/// version bump merges and deletes.
 fn is_parent_candidate(branch: &str, current: &str) -> bool {
     let parsed = BranchType::parse(branch);
     branch != current
         && (parsed == BranchType::Develop || parsed.is_work_branch())
-        && !branch.starts_with("chore/set-version-")
 }
 
 /// `(branch, commits only on current, commits only on branch)` for every
@@ -222,31 +221,24 @@ fn prompt_breaking_change(prompter: &dyn Prompter) -> Result<bool, String> {
     Ok(idx == 1)
 }
 
-fn finish_fix(git: &dyn Git, hosting: &dyn HostingPlatform, commit_type: &str, name: &str, parent: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
+fn finish_fix(git: &dyn Git, hosting: &dyn HostingPlatform, name: &str, parent: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
     let current = git.current_branch()?;
     if try_cleanup_merged(git, hosting, &current, accept_merge_type)? {
         return Ok(());
     }
-    push_and_create_pr(git, hosting, &current, parent, &pr_title(commit_type, false, name), template)
+    push_and_create_pr(git, hosting, &current, parent, &pr_title("fix", false, name), template)
 }
 
 pub fn finish_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, branch_type: &BranchType, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
     let BranchType::ReleaseFix { major, minor, patch, name } = branch_type else {
         return Err("Cannot finish: not on a release-fix branch".to_string());
     };
-    finish_fix(git, hosting, "fix", name, &SemVer::new(*major, *minor, *patch).release_branch(), template, accept_merge_type)
+    finish_fix(git, hosting, name, &SemVer::new(*major, *minor, *patch).release_branch(), template, accept_merge_type)
 }
 
 pub fn finish_hotfix_fix(git: &dyn Git, hosting: &dyn HostingPlatform, branch_type: &BranchType, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
     let BranchType::HotfixFix { major, minor, patch, name } = branch_type else {
         return Err("Cannot finish: not on a hotfix-fix branch".to_string());
     };
-    finish_fix(git, hosting, "fix", name, &SemVer::new(*major, *minor, *patch).hotfix_branch(), template, accept_merge_type)
-}
-
-pub fn finish_release_chore(git: &dyn Git, hosting: &dyn HostingPlatform, branch_type: &BranchType, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
-    let BranchType::ReleaseChore { major, minor, patch, name } = branch_type else {
-        return Err("Cannot finish: not on a release-chore branch".to_string());
-    };
-    finish_fix(git, hosting, "chore", name, &SemVer::new(*major, *minor, *patch).release_branch(), template, accept_merge_type)
+    finish_fix(git, hosting, name, &SemVer::new(*major, *minor, *patch).hotfix_branch(), template, accept_merge_type)
 }

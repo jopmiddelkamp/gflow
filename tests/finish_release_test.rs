@@ -124,21 +124,22 @@ fn bump_patch_protected_fresh_defers_the_tag_and_uses_the_new_version() {
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.1-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.1-into-release-1.1.0",
+        "create_branch:version/1.1.1-into-release-1.1.0:release/1.1.0",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.1.1",
-        "push:release-chore/1.1.0/set-version",
+        "push:version/1.1.1-into-release-1.1.0",
         "checkout:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
-        "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0",
-        "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.1",
+        "merged_pr_to:version/1.1.1-into-release-1.1.0:release/1.1.0",
+        "create_or_get_pr:version/1.1.1-into-release-1.1.0:release/1.1.0:chore: set version 1.1.1",
         "copy_text:chore: set version 1.1.1\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
+        "enable_auto_complete:https://github.com/org/repo/pull/1",
     ]);
     assert_eq!(script.calls(), vec!["run:1.1.1"]);
     assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
@@ -152,7 +153,7 @@ fn bump_protected_never_tags_a_merged_version_pr_that_is_not_on_the_release_bran
     git.tag_commits.insert("v1.1.0".to_string(), "release-tip".to_string());
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        ("version/1.1.1-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
         LandedPr {
             url: "https://github.com/org/repo/pull/3".to_string(),
             head_sha: "old-chore-head".to_string(),
@@ -163,6 +164,7 @@ fn bump_protected_never_tags_a_merged_version_pr_that_is_not_on_the_release_bran
     bump_version(&git, &hosting, None, &patch_protected_cfg(), 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
+        "tags_on_branch:release/1.1.0",
         "is_ancestor:old-line-merge:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "create_tag:v1.1.1:chore: bump version to v1.1.1",
@@ -177,7 +179,7 @@ fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
     git.tag_commits.insert("v1.1.0".to_string(), "old-tip-sha".to_string());
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        ("version/1.1.1-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
         gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
@@ -191,15 +193,16 @@ fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
     bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
+        "tags_on_branch:release/1.1.0",
         "is_ancestor:merge-commit-sha:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0",
         "create_tag_at:v1.1.1:chore: bump version to v1.1.1:merge-commit-sha",
         "push_tag:v1.1.1",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "local_branch_exists:version/1.1.1-into-release-1.1.0",
+        "remote_branch_exists:version/1.1.1-into-release-1.1.0",
     ]);
-    assert_eq!(hosting.calls(), vec!["merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0"]);
+    assert_eq!(hosting.calls(), vec!["merged_pr_to:version/1.1.1-into-release-1.1.0:release/1.1.0"]);
     // Convergence rule carries over from rc mode: never re-run the script on
     // the merged-PR path.
     assert!(script.calls().is_empty());
@@ -216,21 +219,22 @@ fn bump_protected_fresh_with_changes_defers_the_tag_to_the_landing_pr() {
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.1.0",
-        "push:release-chore/1.1.0/set-version",
+        "push:version/1.1.0-into-release-1.1.0",
         "checkout:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
-        "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0",
-        "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0",
+        "merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0",
+        "create_or_get_pr:version/1.1.0-into-release-1.1.0:release/1.1.0:chore: set version 1.1.0",
         "copy_text:chore: set version 1.1.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
+        "enable_auto_complete:https://github.com/org/repo/pull/1",
     ]);
     // The deferral: no tag is cut on this run, of any kind.
     assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
@@ -247,18 +251,18 @@ fn bump_protected_fresh_noop_cuts_the_tag_immediately() {
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
         "is_working_tree_clean",
         "checkout:release/1.1.0",
-        "delete_branch_local:release-chore/1.1.0/set-version",
+        "delete_branch_local:version/1.1.0-into-release-1.1.0",
         "tags_on_branch:release/1.1.0",
         "create_tag:v1.1.0-rc.1:chore: bump version to v1.1.0-rc.1",
         "push_tag:v1.1.0-rc.1",
     ]);
-    assert_eq!(hosting.calls(), vec!["merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0"]);
+    assert_eq!(hosting.calls(), vec!["merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0"]);
 }
 
 #[test]
@@ -268,7 +272,7 @@ fn bump_protected_cuts_the_deferred_tag_at_the_merge_commit_once_the_pr_lands() 
     git.tag_commits.insert("v1.1.0-rc.1".to_string(), "old-tip-sha".to_string());
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        ("version/1.1.0-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
         gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
@@ -288,10 +292,10 @@ fn bump_protected_cuts_the_deferred_tag_at_the_merge_commit_once_the_pr_lands() 
         "tag_commit_sha:v1.1.0-rc.1",
         "create_tag_at:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2:merge-commit-sha",
         "push_tag:v1.1.0-rc.2",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
     ]);
-    assert_eq!(hosting.calls(), vec!["merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0"]);
+    assert_eq!(hosting.calls(), vec!["merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0"]);
     // Convergence rule: a history-derived script would diff again after every
     // merge, so the merged-PR path never re-runs it.
     assert!(script.calls().is_empty());
@@ -305,7 +309,7 @@ fn bump_protected_already_consumed_falls_through_to_the_fresh_path() {
     git.working_tree_clean_seq.get_mut().extend([true, false]);
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        ("version/1.1.0-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
         gflow::hosting::LandedPr {
             url: "https://github.com/org/repo/pull/9".to_string(),
             head_sha: "chore-head-sha".to_string(),
@@ -323,23 +327,24 @@ fn bump_protected_already_consumed_falls_through_to_the_fresh_path() {
         "is_ancestor:merge-commit-sha:origin/release/1.1.0",
         "tags_on_branch:release/1.1.0",
         "tag_commit_sha:v1.1.0-rc.1",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "remote_branch_exists:release-chore/1.1.0/set-version",
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.1.0",
-        "push:release-chore/1.1.0/set-version",
+        "push:version/1.1.0-into-release-1.1.0",
         "checkout:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
-        "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0",
-        "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0",
+        "merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0",
+        "create_or_get_pr:version/1.1.0-into-release-1.1.0:release/1.1.0:chore: set version 1.1.0",
         "copy_text:chore: set version 1.1.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
+        "enable_auto_complete:https://github.com/org/repo/pull/1",
     ]);
     // Consumed on a previous run — this run never re-cuts a tag.
     assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
@@ -359,38 +364,39 @@ fn bump_protected_with_no_script_tags_the_tip_directly() {
         "create_tag:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2",
         "push_tag:v1.1.0-rc.2",
     ]);
-    assert_eq!(hosting.calls(), vec!["merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0"]);
+    assert_eq!(hosting.calls(), vec!["merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0"]);
 }
 
 #[test]
-fn bump_protected_reuses_a_leftover_remote_chore_branch_without_recreating_it() {
+fn bump_protected_reuses_a_leftover_remote_version_branch_without_recreating_it() {
     let mut git = MockGit::new();
-    git.existing_remote_branches.insert("release-chore/1.1.0/set-version".to_string());
+    git.existing_remote_branches.insert("version/1.1.0-into-release-1.1.0".to_string());
     let hosting = MockHosting::new();
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
-    assert_eq!(git.calls(), vec!["remote_branch_exists:release-chore/1.1.0/set-version"]);
+    assert_eq!(git.calls(), vec!["remote_branch_exists:version/1.1.0-into-release-1.1.0"]);
     assert_eq!(hosting.calls(), vec![
-        "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0",
-        "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0",
+        "merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0",
+        "create_or_get_pr:version/1.1.0-into-release-1.1.0:release/1.1.0:chore: set version 1.1.0",
         "copy_text:chore: set version 1.1.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
+        "enable_auto_complete:https://github.com/org/repo/pull/1",
     ]);
     assert!(script.calls().is_empty());
     assert!(!git.calls().iter().any(|c| c.starts_with("create_branch")));
 }
 
 #[test]
-fn bump_protected_deletes_leftover_local_chore_branch_before_recreating() {
+fn bump_protected_deletes_leftover_local_version_branch_before_recreating() {
     // A prior run crashed after `create_branch` but before the chore branch was
     // ever pushed: it exists locally only. Re-running must not die on git's raw
     // "branch already exists" — the leftover is machine-owned, so gflow clears
     // it itself before recreating.
     let mut git = MockGit::new();
-    git.existing_local_branches.insert("release-chore/1.1.0/set-version".to_string());
+    git.existing_local_branches.insert("version/1.1.0-into-release-1.1.0".to_string());
     git.working_tree_clean_seq.get_mut().extend([true, false]);
     let hosting = MockHosting::new();
     let script = MockVersionScript::new();
@@ -399,22 +405,23 @@ fn bump_protected_deletes_leftover_local_chore_branch_before_recreating() {
     bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
 
     assert_eq!(git.calls(), vec![
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "delete_branch_local:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "delete_branch_local:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
         "is_working_tree_clean",
         "stage_all",
         "commit:chore: set version 1.1.0",
-        "push:release-chore/1.1.0/set-version",
+        "push:version/1.1.0-into-release-1.1.0",
         "checkout:release/1.1.0",
     ]);
     assert_eq!(hosting.calls(), vec![
-        "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0",
-        "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0",
+        "merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0",
+        "create_or_get_pr:version/1.1.0-into-release-1.1.0:release/1.1.0:chore: set version 1.1.0",
         "copy_text:chore: set version 1.1.0\nhttps://github.com/org/repo/pull/1",
         "open_url:https://github.com/org/repo/pull/1",
+        "enable_auto_complete:https://github.com/org/repo/pull/1",
     ]);
 }
 
@@ -435,14 +442,14 @@ fn bump_protected_script_failure_returns_to_the_release_branch() {
     assert_eq!(err, "set-version.sh: command not found");
     let calls = git.calls();
     assert_eq!(calls, vec![
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
         "checkout:release/1.1.0",
     ]);
     assert!(!calls.iter().any(|c| c.starts_with("push:")), "no push on script failure; calls: {calls:?}");
-    assert_eq!(hosting.calls(), vec!["merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0"],
+    assert_eq!(hosting.calls(), vec!["merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0"],
         "no PR call on script failure");
 }
 
@@ -1795,7 +1802,7 @@ fn bump_protected_merged_pr_with_no_prior_tag_cuts_the_first_rc_at_the_merge_com
     git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
-        ("release-chore/1.1.0/set-version".to_string(), "release/1.1.0".to_string()),
+        ("version/1.1.0-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
         landed("chore-head", "merge-commit-sha"),
     );
     let script = MockVersionScript::new();
@@ -2037,7 +2044,7 @@ fn protected_bump_stops_after_failed_merged_version_step() {
         "tag_commit_sha:v1.1.0-rc.1",
         "create_tag_at:v1.1.0-rc.2:chore: bump version to v1.1.0-rc.2:merged",
         "push_tag:v1.1.0-rc.2",
-        "local_branch_exists:release-chore/1.1.0/set-version",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
     ] {
         let mut git = release_git();
         git.tag_commits
@@ -2047,7 +2054,7 @@ fn protected_bump_stops_after_failed_merged_version_step() {
         let mut hosting = MockHosting::new();
         hosting.merged_prs_to.insert(
             (
-                "release-chore/1.1.0/set-version".into(),
+                "version/1.1.0-into-release-1.1.0".into(),
                 "release/1.1.0".into(),
             ),
             any_landed_pr(),
@@ -2063,7 +2070,7 @@ fn protected_bump_stops_after_failed_merged_version_step() {
 
 #[test]
 fn protected_bump_stops_when_consumed_version_cleanup_fails() {
-    let call = "local_branch_exists:release-chore/1.1.0/set-version";
+    let call = "local_branch_exists:version/1.1.0-into-release-1.1.0";
     let mut git = release_git();
     git.tag_commits
         .insert("v1.1.0-rc.1".into(), "merged".into());
@@ -2072,7 +2079,7 @@ fn protected_bump_stops_when_consumed_version_cleanup_fails() {
     let mut hosting = MockHosting::new();
     hosting.merged_prs_to.insert(
         (
-            "release-chore/1.1.0/set-version".into(),
+            "version/1.1.0-into-release-1.1.0".into(),
             "release/1.1.0".into(),
         ),
         any_landed_pr(),
@@ -2087,7 +2094,7 @@ fn protected_bump_stops_when_consumed_version_cleanup_fails() {
 
 #[test]
 fn protected_bump_stops_before_any_git_change_when_hosting_lookup_fails() {
-    let call = "merged_pr_to:release-chore/1.1.0/set-version:release/1.1.0";
+    let call = "merged_pr_to:version/1.1.0-into-release-1.1.0:release/1.1.0";
     let git = release_git();
     let mut hosting = MockHosting::new();
     hosting.fail_call = Some((call.into(), 1));
@@ -2122,17 +2129,17 @@ fn protected_bump_requires_readable_tags_for_direct_and_scripted_patch_bumps() {
 #[test]
 fn protected_bump_stops_after_failed_scripted_version_step() {
     for call in [
-        "remote_branch_exists:release-chore/1.1.0/set-version",
+        "remote_branch_exists:version/1.1.0-into-release-1.1.0",
         "is_working_tree_clean",
-        "local_branch_exists:release-chore/1.1.0/set-version",
-        "delete_branch_local:release-chore/1.1.0/set-version",
-        "create_branch:release-chore/1.1.0/set-version:release/1.1.0",
-        "push:release-chore/1.1.0/set-version",
+        "local_branch_exists:version/1.1.0-into-release-1.1.0",
+        "delete_branch_local:version/1.1.0-into-release-1.1.0",
+        "create_branch:version/1.1.0-into-release-1.1.0:release/1.1.0",
+        "push:version/1.1.0-into-release-1.1.0",
         "checkout:release/1.1.0",
     ] {
         let mut git = release_git();
         git.existing_local_branches
-            .insert("release-chore/1.1.0/set-version".into());
+            .insert("version/1.1.0-into-release-1.1.0".into());
         git.working_tree_clean_seq.get_mut().extend([true, false]);
         git.fail_call = Some((call.into(), 1));
         let result = bump_version(
@@ -2152,7 +2159,7 @@ fn protected_bump_stops_after_failed_scripted_version_step() {
 fn protected_bump_does_not_tag_when_noop_script_cleanup_fails() {
     for call in [
         "checkout:release/1.1.0",
-        "delete_branch_local:release-chore/1.1.0/set-version",
+        "delete_branch_local:version/1.1.0-into-release-1.1.0",
         "tags_on_branch:release/1.1.0",
     ] {
         let mut git = release_git();
@@ -2173,11 +2180,11 @@ fn protected_bump_does_not_tag_when_noop_script_cleanup_fails() {
 #[test]
 fn protected_bump_does_not_tag_after_version_pr_creation_fails() {
     for reuse in [false, true] {
-        let call = "create_or_get_pr:release-chore/1.1.0/set-version:release/1.1.0:chore: set version 1.1.0";
+        let call = "create_or_get_pr:version/1.1.0-into-release-1.1.0:release/1.1.0:chore: set version 1.1.0";
         let mut git = release_git();
         if reuse {
             git.existing_remote_branches
-                .insert("release-chore/1.1.0/set-version".into());
+                .insert("version/1.1.0-into-release-1.1.0".into());
         }
         git.working_tree_clean_seq.get_mut().extend([true, false]);
         let mut hosting = MockHosting::new();
@@ -2407,4 +2414,123 @@ fn protected_release_stops_if_existing_tag_cannot_be_verified_or_pushed() {
         );
         assert!(!git.calls().iter().any(|c| c.starts_with("delete_")));
     }
+}
+
+#[test]
+fn bump_protected_that_merges_its_version_pr_now_tags_the_merge_commit_in_the_same_run() {
+    // No auto-complete on this repo, but nothing blocks a merge: gflow merges,
+    // fetches the merge commit and cuts the tag, so no re-run is needed.
+    let mut git = MockGit::new();
+    git.tags_on_branch = vec!["v1.1.0".to_string()];
+    git.tag_commits.insert("v1.1.0".to_string(), "old-tip-sha".to_string());
+    git.working_tree_clean_seq.get_mut().extend([true, false]);
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
+    let mut hosting = MockHosting::new();
+    hosting.auto_complete_error = Some("auto-merge is not allowed".to_string());
+    hosting.landed_on_merge.insert(
+        ("version/1.1.1-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
+        landed("version-head", "merge-commit-sha"),
+    );
+    let script = MockVersionScript::new();
+
+    bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
+
+    let calls = git.calls();
+    let after_push = &calls[calls.iter().position(|c| c == "push:version/1.1.1-into-release-1.1.0").unwrap() + 1..];
+    assert_eq!(after_push, [
+        "checkout:release/1.1.0",
+        "fetch",
+        "is_ancestor:merge-commit-sha:origin/release/1.1.0",
+        "tags_on_branch:release/1.1.0",
+        "tag_commit_sha:v1.1.0",
+        "create_tag_at:v1.1.1:chore: bump version to v1.1.1:merge-commit-sha",
+        "push_tag:v1.1.1",
+        "local_branch_exists:version/1.1.1-into-release-1.1.0",
+        "remote_branch_exists:version/1.1.1-into-release-1.1.0",
+    ]);
+    assert_eq!(hosting.calls()[4..], [
+        "enable_auto_complete:https://github.com/org/repo/pull/1".to_string(),
+        "merge_pr:https://github.com/org/repo/pull/1".to_string(),
+        "merged_pr_to:version/1.1.1-into-release-1.1.0:release/1.1.0".to_string(),
+    ]);
+}
+
+#[test]
+fn bump_protected_that_cannot_complete_its_version_pr_defers_the_tag_to_a_human_merge() {
+    let mut git = MockGit::new();
+    git.working_tree_clean_seq.get_mut().extend([true, false]);
+    let mut hosting = MockHosting::new();
+    hosting.auto_complete_error = Some("auto-merge is not allowed".to_string());
+    hosting.merge_pr_error = Some("review required".to_string());
+    let script = MockVersionScript::new();
+    let cfg = RepoConfig { mode: Mode::Protected, ..RepoConfig::default() };
+
+    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(hosting.calls().last().unwrap(), "merge_pr:https://github.com/org/repo/pull/1");
+    assert_eq!(git.calls().last().unwrap(), "checkout:release/1.1.0");
+    assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c == "fetch"));
+}
+
+/// A patch bump whose version PR gflow can merge at once (no auto-complete).
+fn merge_now_bump() -> (MockGit, MockHosting) {
+    let mut git = MockGit::new();
+    git.tags_on_branch = vec!["v1.1.0".to_string()];
+    git.tag_commits.insert("v1.1.0".to_string(), "old-tip-sha".to_string());
+    git.working_tree_clean_seq.get_mut().extend([true, false]);
+    git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
+    let mut hosting = MockHosting::new();
+    hosting.auto_complete_error = Some("auto-merge is not allowed".to_string());
+    hosting.landed_on_merge.insert(
+        ("version/1.1.1-into-release-1.1.0".to_string(), "release/1.1.0".to_string()),
+        landed("version-head", "merge-commit-sha"),
+    );
+    (git, hosting)
+}
+
+#[test]
+fn bump_protected_whose_merge_is_not_visible_yet_defers_the_tag() {
+    // The platform accepted the merge but its PR list does not show it yet:
+    // no merge commit to tag, so the operator re-runs gflow bump.
+    let (git, mut hosting) = merge_now_bump();
+    hosting.landed_on_merge.clear();
+
+    bump_version(&git, &hosting, Some(&MockVersionScript::new()), &patch_protected_cfg(), 1, 1).unwrap();
+
+    assert_eq!(git.calls().last().unwrap(), "fetch");
+    assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
+}
+
+#[test]
+fn bump_protected_merge_now_failures_stop_before_a_tag_is_pushed() {
+    for call in ["fetch", "push_tag:v1.1.1"] {
+        let (mut git, hosting) = merge_now_bump();
+        git.fail_call = Some((call.into(), 1));
+        assert_git_failure(
+            bump_version(&git, &hosting, Some(&MockVersionScript::new()), &patch_protected_cfg(), 1, 1),
+            &git,
+            call,
+        );
+    }
+    let call = "merged_pr_to:version/1.1.1-into-release-1.1.0:release/1.1.0";
+    let (git, mut hosting) = merge_now_bump();
+    hosting.fail_call = Some((call.into(), 2));
+    assert_hosting_failure(
+        bump_version(&git, &hosting, Some(&MockVersionScript::new()), &patch_protected_cfg(), 1, 1),
+        &hosting,
+        call,
+    );
+    assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
+}
+
+#[test]
+fn protected_rc_bump_without_a_script_requires_readable_tags() {
+    let call = "tags_on_branch:release/1.1.0";
+    let mut git = release_git();
+    git.fail_call = Some((call.into(), 1));
+    assert_git_failure(
+        bump_version(&git, &MockHosting::new(), None, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1),
+        &git,
+        call,
+    );
 }

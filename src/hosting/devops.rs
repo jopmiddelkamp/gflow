@@ -66,6 +66,17 @@ impl<'a> AzureDevOps<'a> {
         )
     }
 
+    /// Every completion squashes and deletes the source branch, like the
+    /// SQUASH banner asks a human to.
+    fn update_pr(&self, url: &str, how: &[&str]) -> Result<()> {
+        let id = validate_pr_id(url.rsplit('/').next().unwrap_or_default())?;
+        let mut args: Vec<String> = ["repos", "pr", "update", "--id", id, "--organization"].map(String::from).to_vec();
+        args.push(self.org_url());
+        args.extend(how.iter().map(|a| a.to_string()));
+        args.extend(["--squash", "true", "--delete-source-branch", "true"].map(String::from));
+        self.run_az(&args).map(|_| ())
+    }
+
     fn run_az(&self, args: &[String]) -> Result<String> {
         self.verify_extension()?;
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -266,6 +277,14 @@ impl HostingPlatform for AzureDevOps<'_> {
 
     fn prefetch_prs(&self, head: &str) -> Result<()> {
         self.prs_from(head).map(|_| ())
+    }
+
+    fn enable_auto_complete(&self, url: &str) -> Result<()> {
+        self.update_pr(url, &["--auto-complete", "true"])
+    }
+
+    fn merge_pr(&self, url: &str) -> Result<()> {
+        self.update_pr(url, &["--status", "completed"])
     }
 }
 

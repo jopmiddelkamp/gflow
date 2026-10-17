@@ -1,0 +1,439 @@
+<meta charset="utf-8">
+<title>gflow Branch Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a control deck (step card + live branch state) above a horizontal, scrollable commit graph with lanes per branch family. */
+:root {
+  --bg: #f4f6f9; --surface: #ffffff; --fg: #18202d; --muted: #5a6577; --line: #d8dee7; --soft: #eaeef4;
+  --main: #2a57cf; --develop: #17865a; --release: #b8730a; --hotfix: #c33246; --work: #7547c4; --landing: #0f8696; --version: #687487;
+  --warn-bg: #fff2e0; --warn-fg: #8a4b00; --bad-bg: #fde8eb; --bad-fg: #9b1c30; --ok-bg: #e2f5ec; --ok-fg: #0f6a45;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11151c; --surface: #1a2029; --fg: #e4e9f1; --muted: #98a3b4; --line: #2d3542; --soft: #222a35;
+  --main: #6f95ff; --develop: #46c48d; --release: #e3a33a; --hotfix: #f06a7d; --work: #a985f0; --landing: #3ec3d3; --version: #9aa6b8;
+  --warn-bg: #3a2a12; --warn-fg: #f4c27a; --bad-bg: #3d1d24; --bad-fg: #ff9aa8; --ok-bg: #143327; --ok-fg: #7fe0b2;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11151c; --surface: #1a2029; --fg: #e4e9f1; --muted: #98a3b4; --line: #2d3542; --soft: #222a35;
+  --main: #6f95ff; --develop: #46c48d; --release: #e3a33a; --hotfix: #f06a7d; --work: #a985f0; --landing: #3ec3d3; --version: #9aa6b8;
+  --warn-bg: #3a2a12; --warn-fg: #f4c27a; --bad-bg: #3d1d24; --bad-fg: #ff9aa8; --ok-bg: #143327; --ok-fg: #7fe0b2;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: flex; flex-direction: column; gap: 14px; }
+header h1 { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 75ch; }
+code, .mono { font-family: var(--mono); }
+
+.deck { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 860px) { .deck { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+
+.stepHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stepNo { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.phase { font-weight: 600; }
+.actor { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.actor.gflow { color: var(--main); } .actor.platform { color: var(--landing); } .actor.dev { color: var(--work); } .actor.reviewer { color: var(--develop); } .actor.tool { color: var(--muted); }
+.cmd { margin-top: 10px; font-family: var(--mono); font-size: 13px; background: var(--soft); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.text { margin: 10px 0 0; }
+.flag { margin-top: 10px; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+.flag.conflict { background: var(--warn-bg); color: var(--warn-fg); }
+.flag.refuse { background: var(--bad-bg); color: var(--bad-fg); }
+.flag.done { background: var(--ok-bg); color: var(--ok-fg); }
+.versions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }
+.versions b { color: var(--fg); font-family: var(--mono); font-weight: 600; }
+
+.state { display: flex; flex-direction: column; gap: 10px; }
+.fam { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; align-items: start; }
+.fam > .eyebrow { padding-top: 3px; }
+.pills { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.pill { font-family: var(--mono); font-size: 12px; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--c); color: var(--c); background: color-mix(in srgb, var(--c) 9%, transparent); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.pill.new { background: var(--c); color: var(--surface); }
+.pill.gone { text-decoration: line-through; opacity: 0.55; border-style: dashed; background: transparent; }
+.none { color: var(--muted); font-size: 12px; }
+.prs { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+.pr { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.pr .num { font-family: var(--mono); font-weight: 600; }
+.pr .route { font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.pr .type { font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; padding: 0 6px; border-radius: 3px; background: var(--soft); }
+.pr.merged { opacity: 0.6; }
+.tagList { display: flex; flex-wrap: wrap; gap: 5px; }
+.tag { font-family: var(--mono); font-size: 12px; padding: 1px 7px; border-radius: 4px; background: var(--soft); }
+.tag.new { outline: 1.5px solid var(--fg); }
+
+.controls { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.btns { display: flex; gap: 6px; }
+button { font: inherit; font-size: 13px; font-weight: 600; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--main); outline-offset: 2px; }
+.sliderBox { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+input[type=range] { width: 100%; accent-color: var(--main); }
+.ticks { position: relative; height: 18px; }
+.ticks button { position: absolute; transform: translateX(-2px); padding: 0 4px; font-size: 10.5px; font-weight: 500; border: none; border-left: 1px solid var(--line); border-radius: 0; background: none; color: var(--muted); white-space: nowrap; }
+.ticks button.on { color: var(--fg); font-weight: 600; }
+@media (max-width: 700px) { .ticks { display: none; } .controls { grid-template-columns: minmax(0, 1fr); } }
+
+.settings { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+.setting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; font-family: var(--mono); font-weight: 500; padding: 4px 10px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--main); color: var(--surface); font-weight: 600; }
+.missing { color: var(--bad-fg); font-size: 13px; }
+.graphCard { padding: 0; overflow: hidden; }
+.graphHead { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); font-weight: 600; cursor: pointer; }
+.toggle input { accent-color: var(--landing); margin: 0; }
+.legend { display: inline-flex; align-items: center; gap: 6px; }
+.graph { display: grid; grid-template-columns: 104px minmax(0, 1fr); }
+.labels { border-right: 1px solid var(--line); background: var(--surface); }
+.labels div { font-family: var(--mono); font-size: 11px; display: flex; align-items: center; padding-left: 10px; color: var(--c); font-weight: 600; white-space: nowrap; overflow: hidden; }
+.scroll { overflow-x: auto; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { .scroll { scroll-behavior: auto; } }
+svg text { font-family: var(--mono); }
+.note { font-size: 12.5px; color: var(--muted); max-width: 90ch; }
+.note b { color: var(--fg); }
+.note p { margin: 0 0 6px; }
+.note ul { margin: 0; padding-left: 18px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>gflow Branch Replay</h1>
+    <p>One release and one hotfix, one command per step. Pick the <code>.gflow/config</code> settings, then drag the slider or use the arrow keys.</p>
+  </header>
+
+  <div class="card settings" id="settings" aria-label="Cycle settings"></div>
+
+  <div class="card controls">
+    <div class="btns">
+      <button id="prev" type="button" aria-label="Previous step">◀</button>
+      <button id="play" type="button">Play</button>
+      <button id="next" type="button" aria-label="Next step">▶</button>
+    </div>
+    <div class="sliderBox">
+      <input id="slider" type="range" min="0" value="0" aria-label="Step">
+      <div class="ticks" id="ticks"></div>
+    </div>
+    <div class="stepNo" id="counter"></div>
+  </div>
+
+  <div class="deck">
+    <section class="card" aria-live="polite">
+      <div class="stepHead"><span class="eyebrow" id="phase"></span><span class="actor" id="actor"></span></div>
+      <div class="cmd" id="cmd"></div>
+      <p class="text" id="text"></p>
+      <div id="flag"></div>
+      <div class="versions" id="versions"></div>
+    </section>
+    <section class="card state">
+      <div class="eyebrow">Branches on origin after this step</div>
+      <div id="branches" class="state"></div>
+      <div class="fam"><span class="eyebrow">Open PRs</span><div id="prs" class="prs"></div></div>
+      <div class="fam"><span class="eyebrow">Tags</span><div id="tags" class="tagList"></div></div>
+    </section>
+  </div>
+
+  <section class="card graphCard">
+    <div class="graphHead">
+      <label class="toggle" id="landingToggleBox" for="landingToggle"><input type="checkbox" id="landingToggle" checked> Show landing branches</label>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="var(--muted)"/></svg>commit</span>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><rect x="2.5" y="2.5" width="9" height="9" transform="rotate(45 7 7)" fill="var(--muted)"/></svg>squash merge</span>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="var(--surface)" stroke="var(--muted)" stroke-width="2.5"/></svg>merge commit</span>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="2 2"/></svg>branch start (no new commit)</span>
+      <span class="legend"><svg width="22" height="14" aria-hidden="true"><line x1="1" y1="7" x2="21" y2="7" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1.5"/></svg>squashed from</span>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="var(--muted)" opacity=".3"/></svg>unreachable (branch deleted)</span>
+      <span class="legend"><svg width="14" height="14" aria-hidden="true"><path d="M7 2 L12 7 L7 12 L2 7Z" fill="var(--fg)"/></svg>tag</span>
+    </div>
+    <div class="graph">
+      <div class="labels" id="labels"></div>
+      <div class="scroll" id="scroll"><svg id="svg"></svg></div>
+    </div>
+  </section>
+
+  <div class="note"><p><b>This page is the spec.</b> It draws one file from <code>spec/cycles/</code>, listed in <code>spec/cycles/index.json</code>. <code>spec/generate_cycles.py</code> writes those files; edit it, not the JSON. No tool runs them against a real repo yet. Commit messages for merges are shortened. With landing branches hidden, a landing PR merge is drawn from the source commit that the landing branch carries.</p><ul id="rules"></ul></div>
+</div>
+
+<script>
+(async () => {
+// ---------- Simulation model ----------
+const FAM = { main: 'main', develop: 'develop', landing: 'landing', hotfix: 'hotfix', hfix: 'hotfix', release: 'release', rside: 'release', version: 'version', work: 'work' };
+const CAT_ORDER = ['main', 'landing', 'hotfix', 'hfix', 'release', 'rside', 'version', 'develop', 'work'];
+const CAT_LABEL = { main: 'main', landing: 'landing/*', hotfix: 'hotfix/*', hfix: 'hotfix-fix/*', release: 'release/*', rside: 'release-fix/*', version: 'version/*', develop: 'develop', work: 'feature · fix' };
+const catOf = n => n === 'main' ? 'main' : n === 'develop' ? 'develop'
+  : n.startsWith('landing/') ? 'landing' : n.startsWith('hotfix-fix/') ? 'hfix' : n.startsWith('hotfix/') ? 'hotfix'
+  : n.startsWith('release-fix/') ? 'rside' : n.startsWith('release/') ? 'release'
+  : n.startsWith('version/') ? 'version' : 'work';
+// Version branches share one row: their commits never share a column.
+const ONE_ROW = new Set(['version']);
+
+// One cycle at a time: build() resets this state from a cycle file.
+let commits, refs, tags, prs, slotOf, used, maxSlot, steps;
+function reset() {
+  commits = []; refs = {}; tags = {}; prs = {}; slotOf = {}; used = {}; maxSlot = {}; steps = [];
+  CAT_ORDER.forEach(c => { used[c] = new Set(); maxSlot[c] = 0; });
+}
+function alloc(name) {
+  const c = catOf(name); let s = 0; while (!ONE_ROW.has(c) && used[c].has(s)) s++;
+  used[c].add(s); maxSlot[c] = Math.max(maxSlot[c], s + 1); slotOf[name] = { cat: c, slot: s };
+}
+function br(name, from) { refs[name] = typeof from === 'number' ? from : refs[from]; alloc(name); }
+// A start marker is not a commit: it shows on the branch's own row where a
+// release or hotfix begins. It stands for the same commit as its base.
+function brStart(name, from) {
+  br(name, from);
+  const base = commits[refs[name]];
+  add(name, `${name} starts here (same commit as ${from})`, [refs[name]], 'start', base.ver);
+}
+function del(name) { const s = slotOf[name]; used[s.cat].delete(s.slot); delete refs[name]; }
+function add(branch, msg, parents, kind, ver, extra = {}) {
+  const s = slotOf[branch], id = commits.length;
+  commits.push({ id, cat: s.cat, slot: s.slot, parents, kind, msg, ver, branch, ...extra });
+  refs[branch] = id; return id;
+}
+const verOf = b => commits[refs[b]].ver;
+const cm = (b, msg, ver) => add(b, msg, [refs[b]], 'commit', ver ?? verOf(b));
+const sq = (src, b, msg, ver) => add(b, msg, [refs[b]], 'squash', ver ?? verOf(b), { squashOf: refs[src] });
+// A merge takes the source's VERSION unless the cycle says which side won a conflict.
+// via: the parent that carries the source line, when the merge lands on a landing branch.
+const mg = (src, b, msg, ver, via = 0) => add(b, msg, [refs[b], refs[src]], 'merge', ver ?? verOf(src), { via });
+const tag = (t, b) => { tags[t] = typeof b === 'number' ? b : refs[b]; };
+const pr = (n, from, to, type) => { prs[n] = { n, from, to, type, state: 'open' }; };
+const prMerged = n => { prs[n].state = 'merged'; };
+
+function step(phase, actor, cmd, text, fn, flag) {
+  const before = commits.length, prevRefs = steps.length ? steps[steps.length - 1].refs : {};
+  const prevTags = steps.length ? steps[steps.length - 1].tags : {};
+  fn && fn();
+  const r = { ...refs };
+  steps.push({
+    phase, actor, flag, n: commits.length, cmd, text, from: before, refs: r, tags: { ...tags },
+    prs: JSON.parse(JSON.stringify(prs)), slots: JSON.parse(JSON.stringify(slotOf)),
+    created: Object.keys(r).filter(k => !(k in prevRefs)),
+    deleted: Object.keys(prevRefs).filter(k => !(k in r)),
+    newTags: Object.keys(tags).filter(k => !(k in prevTags)),
+  });
+}
+
+// Each action is one real command; its frames are the steps of this page.
+const OPS = {
+  init: o => { alloc('main'); alloc('develop'); add('main', 'Initial commit', [], 'commit', o.version); refs.develop = 0; },
+  branch: o => br(o.name, o.from),
+  start: o => brStart(o.name, o.from),
+  commit: o => cm(o.branch, o.message, o.version),
+  squash: o => sq(o.from, o.into, o.message, o.version),
+  merge: o => mg(o.from, o.into, o.message, o.version, o.via || 0),
+  tag: o => tag(o.name, o.on),
+  untag: o => { delete tags[o.name]; },
+  delete: o => del(o.name),
+  openPr: o => pr(o.pr, o.from, o.into, o.method === 'squash' ? 'SQUASH' : 'MERGE COMMIT'),
+  mergedPr: o => prMerged(o.pr),
+};
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function build(spec) {
+  reset();
+  spec.actions.forEach((action, index) => action.frames.forEach(frame =>
+    step(action.phase, action.actor, frame.cmd, frame.text, () => frame.ops.forEach(o => {
+      if (!OPS[o.op]) throw new Error(`Unknown op ${o.op} in action ${index}`);
+      OPS[o.op](o);
+    }), frame.flag)));
+  $('rules').innerHTML = (spec.rules || []).map(r => `<li>${esc(r)}</li>`).join('');
+  $('landingToggleBox').hidden = maxSlot.landing === 0;
+  const seenPhase = new Set(), max = steps.length - 1;
+  $('slider').max = max;
+  $('ticks').innerHTML = steps.map((s, i) => {
+    if (seenPhase.has(s.phase)) return ''; seenPhase.add(s.phase);
+    return `<button type="button" data-phase="${esc(s.phase)}" data-i="${i}" style="left:calc(${(i / max) * 100}% - ${(i / max) * 14}px + 7px)">${esc(s.phase)}</button>`;
+  }).join('');
+}
+
+// ---------- Layout ----------
+// Landing branches can be hidden. Their rows and commits drop out, and an
+// edge from a landing commit starts at the source commit that it carries.
+const $ = id => document.getElementById(id);
+let showLanding = true;
+try { showLanding = localStorage.getItem('gflowReplayLanding') !== '0'; } catch (_) {}
+const COLW = 38, ROWH = 36, PADL = 22, PADT = 8, PILL_SPACE = 560;
+const showsCat = cat => showLanding || cat !== 'landing';
+let rowIndex = {}, rows = 0, rowCats = [];
+function layout() {
+  rowIndex = {}; rows = 0; rowCats = [];
+  CAT_ORDER.filter(showsCat).forEach(c => { rowIndex[c] = rows; for (let i = 0; i < maxSlot[c]; i++) rowCats.push(c); rows += maxSlot[c]; });
+  $('labels').innerHTML = `<div style="height:${PADT}px"></div>` + rowCats.map((c, i) =>
+    `<div style="height:${ROWH}px;--c:${color(c)}">${rowCats[i - 1] === c ? '' : CAT_LABEL[c]}</div>`).join('');
+}
+const rowOf = (cat, slot) => rowIndex[cat] + slot;
+const yOfRow = r => PADT + r * ROWH + ROWH / 2;
+const Y = c => yOfRow(rowOf(c.cat, c.slot));
+const color = cat => `var(--${FAM[cat]})`;
+const carried = id => { while (!showsCat(commits[id].cat)) { const c = commits[id]; id = c.parents[c.via ?? 0]; } return id; };
+
+function reachable(st) {
+  const seen = new Set(), stack = [...Object.values(st.refs), ...Object.values(st.tags)];
+  while (stack.length) { const id = stack.pop(); if (id == null || seen.has(id) || id >= st.n) continue; seen.add(id); commits[id].parents.forEach(p => stack.push(p)); }
+  return seen;
+}
+
+function renderGraph(st) {
+  const live = reachable(st), n = st.n, col = new Map();
+  for (let i = 0; i < n; i++) if (showsCat(commits[i].cat)) col.set(i, col.size);
+  const X = id => PADL + col.get(id) * COLW;
+  const pillX = PADL + Math.max(col.size - 1, 0) * COLW + 34;
+  const width = pillX + PILL_SPACE, height = PADT * 2 + rows * ROWH;
+  const svg = $('svg'); svg.setAttribute('width', width); svg.setAttribute('height', height); svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  let bands = '', edges = '', nodes = '', labels = '';
+  for (let r = 0; r < rows; r++) if (r % 2 === 0) bands += `<rect x="0" y="${PADT + r * ROWH}" width="${width}" height="${ROWH}" fill="var(--soft)" opacity=".45"/>`;
+  for (const i of col.keys()) {
+    const c = commits[i], x = X(i), y = Y(c), ghost = !live.has(i), op = ghost ? .28 : 1;
+    c.parents.forEach((raw, k) => {
+      const p = carried(raw), pc = commits[p], px = X(p), py = Y(pc), stroke = k === 0 ? color(c.cat) : color(pc.cat);
+      const d = py === y ? `M${px} ${py} L${x} ${y}` : `M${px} ${py} C${x - COLW * .6} ${py} ${x - COLW * .6} ${y} ${x} ${y}`;
+      edges += `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="2" opacity="${ghost ? .28 : .85}"/>`;
+    });
+    if (c.squashOf != null) {
+      const s = commits[c.squashOf], sx = X(s.id), sy = Y(s);
+      edges += `<path d="M${sx} ${sy} C${x - COLW * .6} ${sy} ${x - COLW * .6} ${y} ${x} ${y}" fill="none" stroke="${color(s.cat)}" stroke-width="1.5" stroke-dasharray="3 3" opacity=".55"/>`;
+    }
+    const fill = color(c.cat), isNew = i >= st.from;
+    const tip = `<title>${esc(c.msg)}\non ${esc(c.branch)} · VERSION ${esc(c.ver)}</title>`;
+    if (isNew) nodes += `<circle cx="${x}" cy="${y}" r="12" fill="${fill}" opacity=".2"/>`;
+    if (c.kind === 'start') nodes += `<g opacity="${op}"><circle cx="${x}" cy="${y}" r="5" fill="var(--surface)" stroke="${fill}" stroke-width="1.6" stroke-dasharray="2 2"/>${tip}</g>`;
+    else if (c.kind === 'merge') nodes += `<g opacity="${op}"><circle cx="${x}" cy="${y}" r="6" fill="var(--surface)" stroke="${fill}" stroke-width="2.6"/>${tip}</g>`;
+    else if (c.kind === 'squash') nodes += `<g opacity="${op}"><rect x="${x - 5}" y="${y - 5}" width="10" height="10" transform="rotate(45 ${x} ${y})" fill="${fill}"/>${tip}</g>`;
+    else nodes += `<g opacity="${op}"><circle cx="${x}" cy="${y}" r="5.5" fill="${fill}"/>${tip}</g>`;
+  }
+  // tags below their commit
+  Object.entries(st.tags).forEach(([t, id]) => {
+    const c = commits[id], x = X(id), y = Y(c) + 15, isNew = st.newTags.includes(t);
+    labels += `<path d="M${x - 9} ${y - 4} l3.5 3.5 l-3.5 3.5 l-3.5 -3.5Z" fill="var(--fg)"/><text x="${x - 4}" y="${y + 3}" font-size="10" font-weight="${isNew ? 700 : 500}" fill="var(--fg)">${t}</text>`;
+  });
+  // branch pills at the right, in the branch's own row, linked to its tip
+  const pillOffset = {};
+  Object.entries(st.refs).sort(([a], [b]) => a.localeCompare(b)).forEach(([b, id]) => {
+    const s = st.slots[b];
+    if (!showsCat(s.cat)) return;
+    const rowKey = `${s.cat}:${s.slot}`, px = pillX + (pillOffset[rowKey] || 0);
+    pillOffset[rowKey] = (pillOffset[rowKey] || 0) + b.length * 6.7 + 22;
+    const ry = yOfRow(rowOf(s.cat, s.slot)), c = commits[id], tx = X(id), ty = Y(c), stroke = color(s.cat);
+    const w = b.length * 6.7 + 14, isNew = st.created.includes(b);
+    edges += `<path d="M${tx + 7} ${ty} C${px - 14} ${ty} ${px - 14} ${ry} ${px} ${ry}" fill="none" stroke="${stroke}" stroke-width="1.2" stroke-dasharray="1.5 3" opacity=".8"/>`;
+    labels += `<rect x="${px}" y="${ry - 10}" width="${w}" height="20" rx="4" fill="${isNew ? stroke : 'var(--surface)'}" stroke="${stroke}"/><text x="${px + 7}" y="${ry + 4}" font-size="11.5" font-weight="600" fill="${isNew ? 'var(--surface)' : stroke}">${esc(b)}</text>`;
+  });
+  svg.innerHTML = bands + edges + nodes + labels;
+  const sc = $('scroll'); requestAnimationFrame(() => { sc.scrollLeft = sc.scrollWidth; });
+}
+
+const FAMS = [['main', 'main'], ['develop', 'develop'], ['release', 'release'], ['hotfix', 'hotfix'], ['version', 'version'], ['work', 'work'], ['landing', 'landing']];
+function renderState(st) {
+  const all = [...Object.keys(st.refs), ...st.deleted];
+  $('branches').innerHTML = FAMS.filter(([f]) => showLanding || f !== 'landing').map(([f, label]) => {
+    const names = all.filter(b => FAM[catOf(b)] === f).sort();
+    const pills = names.map(b => {
+      const cls = st.deleted.includes(b) ? 'gone' : st.created.includes(b) ? 'new' : '';
+      const note = cls === 'gone' ? ' (deleted)' : cls === 'new' ? ' (new)' : '';
+      return `<span class="pill ${cls}" style="--c:var(--${f})" title="${esc(b + note)}">${esc(b)}</span>`;
+    }).join('');
+    return `<div class="fam"><span class="eyebrow">${label}</span><div class="pills">${pills || '<span class="none">none</span>'}</div></div>`;
+  }).join('');
+  const prev = steps[cur - 1];
+  const list = Object.values(st.prs).filter(p => p.state === 'open' || (prev && prev.prs[p.n] && prev.prs[p.n].state === 'open'));
+  $('prs').innerHTML = list.length ? list.map(p =>
+    `<div class="pr ${p.state}"><span class="num">#${p.n}</span><span class="route">${esc(p.from)} → ${esc(p.to)}</span><span class="type">${p.state === 'merged' ? 'MERGED' : p.type}</span></div>`).join('') : '<span class="none">none</span>';
+  const tg = Object.keys(st.tags).sort();
+  $('tags').innerHTML = tg.length ? tg.map(t => `<span class="tag ${st.newTags.includes(t) ? 'new' : ''}">${t}</span>`).join('') : '<span class="none">none</span>';
+}
+
+function render() {
+  const st = steps[cur];
+  $('slider').value = cur;
+  $('counter').textContent = `${String(cur).padStart(2, '0')} / ${steps.length - 1}`;
+  $('phase').textContent = st.phase;
+  const a = $('actor'); a.textContent = st.actor; a.className = 'actor ' + st.actor;
+  $('cmd').textContent = st.cmd;
+  $('text').textContent = st.text;
+  let flag = '';
+  if (st.flag === 'conflict') flag = '<div class="flag conflict">⚠ Merge conflict in VERSION. gflow stops here and waits for a manual resolution.</div>';
+  else if (st.flag) { const [k, m] = st.flag.split(':'); flag = `<div class="flag ${k}">${esc(m)}</div>`; }
+  $('flag').innerHTML = flag;
+  const v = b => st.refs[b] != null ? commits[st.refs[b]].ver : '—';
+  $('versions').innerHTML = `<span>VERSION on main: <b>${v('main')}</b></span><span>on develop: <b>${v('develop')}</b></span><span>commits: <b>${commits.slice(0, st.n).filter(c => c.kind !== 'start').length}</b></span>`;
+  [...$('ticks').children].forEach(b => b.classList.toggle('on', b.dataset.phase === st.phase));
+  renderState(st); renderGraph(st);
+}
+
+// ---------- Controls ----------
+let cur = 0, timer = null;
+const maxStep = () => steps.length - 1;
+const go = i => { cur = Math.max(0, Math.min(maxStep(), i)); render(); };
+$('slider').addEventListener('input', e => { stop(); go(+e.target.value); });
+$('prev').addEventListener('click', () => { stop(); go(cur - 1); });
+$('next').addEventListener('click', () => { stop(); go(cur + 1); });
+function stop() { clearInterval(timer); timer = null; $('play').textContent = 'Play'; }
+$('play').addEventListener('click', () => {
+  if (timer) return stop();
+  if (cur === maxStep()) go(0);
+  $('play').textContent = 'Pause';
+  timer = setInterval(() => { if (cur >= maxStep()) return stop(); go(cur + 1); }, 1100);
+});
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); stop(); go(cur + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); go(cur - 1); }
+});
+$('ticks').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { stop(); go(+b.dataset.i); } });
+$('landingToggle').checked = showLanding;
+$('landingToggle').addEventListener('change', e => {
+  showLanding = e.target.checked;
+  try { localStorage.setItem('gflowReplayLanding', showLanding ? '1' : '0'); } catch (_) {}
+  layout(); render();
+});
+
+// ---------- Cycles, read from spec/cycles/ ----------
+// The settings switch is built from the "settings" of every listed cycle, so
+// a new file in index.json shows up here without a page change.
+const fetchJson = url => fetch(url).then(r => { if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`); return r.json(); });
+let cycles;
+try {
+  const index = await fetchJson('cycles/index.json');
+  cycles = await Promise.all(index.cycles.map(async file => ({ file, spec: await fetchJson(`cycles/${file}`) })));
+} catch (error) {
+  $('settings').textContent = `Could not load the cycles: ${error.message}`;
+  return;
+}
+const keys = [], values = {};
+cycles.forEach(c => Object.entries(c.spec.settings || {}).forEach(([k, v]) => {
+  if (!keys.includes(k)) { keys.push(k); values[k] = []; }
+  if (!values[k].includes(v)) values[k].push(v);
+}));
+const fromHash = new URLSearchParams(location.hash.slice(1));
+const chosen = Object.fromEntries(keys.map(k => [k, values[k].includes(fromHash.get(k)) ? fromHash.get(k) : cycles[0].spec.settings[k]]));
+function renderSettings(missing) {
+  $('settings').innerHTML = keys.map(k => `<div class="setting"><span class="eyebrow">${esc(k)}</span><div class="seg" role="group" aria-label="${esc(k)}">${
+    values[k].map(v => `<button type="button" data-k="${esc(k)}" data-v="${esc(v)}" aria-pressed="${chosen[k] === v}">${esc(v)}</button>`).join('')}</div></div>`).join('')
+    + (missing ? '<span class="missing">No cycle file has these settings.</span>' : '');
+}
+$('settings').addEventListener('click', e => {
+  const b = e.target.closest('button[data-k]');
+  if (!b) return;
+  chosen[b.dataset.k] = b.dataset.v;
+  select();
+});
+function select() {
+  stop();
+  history.replaceState(null, '', '#' + new URLSearchParams(chosen));
+  const match = cycles.find(c => keys.every(k => (c.spec.settings || {})[k] === chosen[k]));
+  renderSettings(!match);
+  if (!match) return;
+  build(match.spec);
+  layout();
+  go(cur);
+}
+select();
+})();
+</script>

@@ -13,7 +13,6 @@ pub enum Action {
     StartHotfixFix { name: String, no_checkout: bool, no_worktree: bool },
     FinishWorkBranch { breaking: Option<bool>, base: Option<String> },
     FinishReleaseFix,
-    FinishReleaseChore,
     FinishRelease,
     FinishHotfix,
     FinishHotfixFix,

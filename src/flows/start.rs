@@ -1,4 +1,4 @@
-use crate::flows::{announce_version_pr, open_versioned_branches, require_clean_tree, run_version_script};
+use crate::flows::{announce_version_pr, complete_version_pr, open_versioned_branches, require_clean_tree, run_version_script};
 use crate::git::Git;
 use crate::hosting::{HostingPlatform, PrBody};
 use crate::prompt::Prompter;
@@ -242,15 +242,16 @@ fn bump_develop(git: &dyn Git, hosting: &dyn HostingPlatform, script: &dyn Versi
 }
 
 /// Protected-mode M2: never push develop directly. Reuses a leftover
-/// `chore/set-version-*` branch instead of recreating it — the resume case
+/// `version/*` branch instead of recreating it — the resume case
 /// after a prior run's crash between branch creation and the version PR.
 fn bump_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: &dyn VersionScript, dev: &SemVer) -> Result<(), String> {
-    let chore_branch = format!("chore/set-version-{dev}");
+    let version_branch = dev.version_branch("develop");
     let title = format!("chore: set version {dev}");
 
-    if git.remote_branch_exists(&chore_branch)? {
-        let url = hosting.create_or_get_pr(&chore_branch, "develop", &title, PrBody::NativeDefault)?;
+    if git.remote_branch_exists(&version_branch)? {
+        let url = hosting.create_or_get_pr(&version_branch, "develop", &title, PrBody::NativeDefault)?;
         announce_version_pr(hosting, &title, &url);
+        complete_version_pr(hosting, &url);
         return Ok(());
     }
 
@@ -258,21 +259,24 @@ fn bump_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: 
     // interrupted before the script committed or pushed) — machine-owned, so
     // gflow clears it itself rather than dying on git's raw "branch already
     // exists" (mirrors bump_protected in finish_release.rs).
-    if git.local_branch_exists(&chore_branch)? {
-        git.delete_branch_local(&chore_branch)?;
+    if git.local_branch_exists(&version_branch)? {
+        git.delete_branch_local(&version_branch)?;
     }
-    git.create_branch(&chore_branch, "develop")?;
+    git.create_branch(&version_branch, "develop")?;
     require_clean_tree(git)?;
     match run_version_script(git, script, dev) {
         Ok(true) => {
-            git.push(&chore_branch)?;
-            let url = hosting.create_or_get_pr(&chore_branch, "develop", &title, PrBody::NativeDefault)?;
+            git.push(&version_branch)?;
+            let url = hosting.create_or_get_pr(&version_branch, "develop", &title, PrBody::NativeDefault)?;
             announce_version_pr(hosting, &title, &url);
+            // Off the version branch first: a merge now deletes it.
+            git.checkout("develop")?;
+            complete_version_pr(hosting, &url);
             Ok(())
         }
         Ok(false) => {
             git.checkout("develop")?;
-            git.delete_branch_local(&chore_branch)?;
+            git.delete_branch_local(&version_branch)?;
             println!("↷ skipped: develop version bump (no changes)");
             Ok(())
         }

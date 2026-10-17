@@ -358,10 +358,6 @@ pub fn show_menu(prompter: &dyn Prompter, branch_type: &BranchType, current_bran
             prompter.select("What would you like to do?", &["finish release fix"])?;
             Ok(Action::FinishReleaseFix)
         }
-        BranchType::ReleaseChore { .. } => {
-            prompter.select("What would you like to do?", &["finish release chore"])?;
-            Ok(Action::FinishReleaseChore)
-        }
         BranchType::Release { .. } => {
             let labels: Vec<&str> = ReleaseOption::ALL.iter().map(|o| o.label()).collect();
             let idx = prompter.select("What would you like to do?", &labels)?;

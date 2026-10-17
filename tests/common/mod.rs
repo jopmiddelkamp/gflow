@@ -590,6 +590,13 @@ pub struct MockHosting {
     pub merged_pr: Option<gflow::hosting::MergedPr>,
     /// What `merged_pr_to` reports, keyed by (head, base) (defaults to none landed).
     pub merged_prs_to: HashMap<(String, String), gflow::hosting::LandedPr>,
+    /// When set, `enable_auto_complete` fails with this (the call is still recorded).
+    pub auto_complete_error: Option<String>,
+    /// When set, `merge_pr` fails with this (the call is still recorded).
+    pub merge_pr_error: Option<String>,
+    /// PRs that `merged_pr_to` reports only once `merge_pr` succeeded.
+    pub landed_on_merge: HashMap<(String, String), gflow::hosting::LandedPr>,
+    merged_now: std::cell::Cell<bool>,
 }
 
 impl MockHosting {
@@ -603,6 +610,10 @@ impl MockHosting {
             pr_url: "https://github.com/org/repo/pull/1".to_string(),
             merged_pr: None,
             merged_prs_to: HashMap::new(),
+            auto_complete_error: None,
+            merge_pr_error: None,
+            landed_on_merge: HashMap::new(),
+            merged_now: std::cell::Cell::new(false),
         }
     }
 
@@ -663,10 +674,23 @@ impl HostingPlatform for MockHosting {
         base: &str,
     ) -> Result<Option<gflow::hosting::LandedPr>, String> {
         self.record(format!("merged_pr_to:{head}:{base}"))?;
-        Ok(self
-            .merged_prs_to
-            .get(&(head.to_string(), base.to_string()))
-            .cloned())
+        let key = (head.to_string(), base.to_string());
+        let after_merge = self.merged_now.get().then(|| self.landed_on_merge.get(&key)).flatten();
+        Ok(after_merge.or_else(|| self.merged_prs_to.get(&key)).cloned())
+    }
+
+    fn enable_auto_complete(&self, url: &str) -> Result<(), String> {
+        self.record(format!("enable_auto_complete:{url}"))?;
+        self.auto_complete_error.clone().map_or(Ok(()), Err)
+    }
+
+    fn merge_pr(&self, url: &str) -> Result<(), String> {
+        self.record(format!("merge_pr:{url}"))?;
+        if let Some(e) = &self.merge_pr_error {
+            return Err(e.clone());
+        }
+        self.merged_now.set(true);
+        Ok(())
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {

@@ -473,6 +473,40 @@ pub(crate) fn announce_version_pr(hosting: &dyn HostingPlatform, title: &str, ur
     open_pr_in_browser(hosting, url);
 }
 
+/// How gflow's own version PR got (or will get) merged.
+#[derive(Debug, PartialEq)]
+pub(crate) enum VersionPrCompletion {
+    /// The platform squash-merges it once its checks pass.
+    AutoComplete,
+    /// gflow squash-merged it just now.
+    Merged,
+    /// A human merges it.
+    Manual,
+}
+
+/// Version PRs are machine-owned, so gflow completes them itself: auto-complete
+/// first, so required checks and reviews still gate the merge; merging now
+/// when the platform offers no auto-complete; a human otherwise. The PR is
+/// already open and announced, so a failure here is a warning, never an error.
+pub(crate) fn complete_version_pr(hosting: &dyn HostingPlatform, url: &str) -> VersionPrCompletion {
+    let Err(auto_complete) = hosting.enable_auto_complete(url) else {
+        println!("Auto-complete is on: the platform squash-merges this PR once its checks pass.");
+        return VersionPrCompletion::AutoComplete;
+    };
+    match hosting.merge_pr(url) {
+        Ok(()) => {
+            println!("✔ Squash-merged {url}");
+            VersionPrCompletion::Merged
+        }
+        Err(merge) => {
+            eprintln!("⚠ gflow could not complete this PR. Squash-merge it yourself.");
+            eprintln!("  Auto-complete: {auto_complete}");
+            eprintln!("  Merge: {merge}");
+            VersionPrCompletion::Manual
+        }
+    }
+}
+
 /// Best-effort browser open for a PR gflow just created or re-surfaced: the PR
 /// exists and its URL is already printed, so a failed open (headless CI, no
 /// xdg-open) is a warning, never an error.

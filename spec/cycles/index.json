@@ -1,0 +1,12 @@
+{
+ "cycles": [
+  "protected-rc-delete.json",
+  "protected-rc-keep.json",
+  "protected-patch-delete.json",
+  "protected-patch-keep.json",
+  "free-rc-delete.json",
+  "free-rc-keep.json",
+  "free-patch-delete.json",
+  "free-patch-keep.json"
+ ]
+}

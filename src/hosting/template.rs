@@ -127,10 +127,10 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "gflow-release-chore.md");
-        touch(&dir, "gflow-chore.md");
+        touch(&dir, "gflow-release-fix.md");
+        touch(&dir, "gflow-fix.md");
         touch(&dir, "gflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-release-chore.md")));
+        assert_eq!(resolve_keys(&root, "release-fix", "fix"), Some(dir.join("gflow-release-fix.md")));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -139,9 +139,9 @@ mod tests {
         let root = tmp_dir();
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
-        touch(&dir, "gflow-chore.md");
+        touch(&dir, "gflow-fix.md");
         touch(&dir, "gflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-chore.md")));
+        assert_eq!(resolve_keys(&root, "release-fix", "fix"), Some(dir.join("gflow-fix.md")));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -151,7 +151,7 @@ mod tests {
         let dir = root.join(DIR);
         fs::create_dir_all(&dir).unwrap();
         touch(&dir, "gflow-default.md");
-        assert_eq!(resolve_keys(&root, "release-chore", "chore"), Some(dir.join("gflow-default.md")));
+        assert_eq!(resolve_keys(&root, "release-fix", "fix"), Some(dir.join("gflow-default.md")));
         fs::remove_dir_all(&root).ok();
     }
 }

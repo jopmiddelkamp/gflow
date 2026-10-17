@@ -78,7 +78,8 @@ impl SemVer {
     pub fn hotfix_branch(&self) -> String { format!("hotfix/{}", self.to_release()) }
     pub fn release_fix_branch(&self, name: &str) -> String { format!("release-fix/{}/{name}", self.to_release()) }
     pub fn hotfix_fix_branch(&self, name: &str) -> String { format!("hotfix-fix/{}/{name}", self.to_release()) }
-    pub fn release_chore_branch(&self, name: &str) -> String { format!("release-chore/{}/{name}", self.to_release()) }
+    /// The branch that carries a version commit to a branch already on origin.
+    pub fn version_branch(&self, target: &str) -> String { format!("version/{self}-into-{}", target.replace('/', "-")) }
 }
 
 impl Ord for SemVer {

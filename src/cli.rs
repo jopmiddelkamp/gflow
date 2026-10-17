@@ -232,7 +232,6 @@ pub fn resolve_action(command: Commands, branch_type: &BranchType, worktree_enab
                 }
                 BranchType::Release { .. } => Ok(Action::FinishRelease),
                 BranchType::ReleaseFix { .. } => Ok(Action::FinishReleaseFix),
-                BranchType::ReleaseChore { .. } => Ok(Action::FinishReleaseChore),
                 BranchType::Hotfix { .. } => Ok(Action::FinishHotfix),
                 BranchType::HotfixFix { .. } => Ok(Action::FinishHotfixFix),
                 BranchType::Other => {
