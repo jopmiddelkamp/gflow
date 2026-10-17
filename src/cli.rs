@@ -31,9 +31,16 @@ pub enum Commands {
         /// commit) and continue instead of stopping with undo instructions.
         #[arg(long)]
         accept_merge_type: bool,
+        /// Skip the repo's hook commands for this run (they are listed, not run)
+        #[arg(long, conflicts_with = "abort")]
+        no_hooks: bool,
     },
     /// Bump the patch version on the current release branch
-    Bump,
+    Bump {
+        /// Skip the repo's hook commands for this run (they are listed, not run)
+        #[arg(long)]
+        no_hooks: bool,
+    },
     /// Sync the current release branch into develop
     Sync {
         /// Accept a landing PR that was completed with the wrong type (squash
@@ -142,6 +149,9 @@ pub enum StartKind {
         /// Skip the worktree flow for this command (no effect unless gflow.worktree.enabled)
         #[arg(long)]
         no_worktree: bool,
+        /// Skip the repo's hook commands for this run (they are listed, not run)
+        #[arg(long)]
+        no_hooks: bool,
     },
     /// Start a release fix branch (must be on a release branch)
     ReleaseFix {
@@ -192,7 +202,7 @@ pub fn resolve_action(command: Commands, branch_type: &BranchType, worktree_enab
             StartKind::Chore { name, base, opts } => start_work_branch("chore", name, base, opts.no_checkout, opts.no_worktree),
             StartKind::Docs { name, base, opts } => start_work_branch("docs", name, base, opts.no_checkout, opts.no_worktree),
             StartKind::Refactor { name, base, opts } => start_work_branch("refactor", name, base, opts.no_checkout, opts.no_worktree),
-            StartKind::Release { major, minor, no_worktree } => {
+            StartKind::Release { major, minor, no_worktree, .. } => {
                 let release_type = if major { Some(ReleaseType::Major) }
                     else if minor { Some(ReleaseType::Minor) }
                     else { None };
@@ -239,7 +249,7 @@ pub fn resolve_action(command: Commands, branch_type: &BranchType, worktree_enab
                 }
             }
         }
-        Commands::Bump => {
+        Commands::Bump { .. } => {
             require_release_branch(branch_type)?;
             Ok(Action::BumpVersion)
         }

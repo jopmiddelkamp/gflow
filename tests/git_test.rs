@@ -537,6 +537,8 @@ fn every_primitive_issues_its_documented_git_command() {
         // message cannot contain. %B%n would split multi-paragraph messages.
         ("git log v2.5.0..develop --format=%B%x00", Box::new(|g| { g.commit_messages("v2.5.0", "develop").ok(); })),
         ("git rev-parse --git-dir", Box::new(|g| { g.git_dir().ok(); })),
+        // Absolute: the main tree's plain answer is the relative ".git".
+        ("git rev-parse --path-format=absolute --git-common-dir", Box::new(|g| { g.git_common_dir().ok(); })),
         ("git remote get-url origin", Box::new(|g| { g.remote_url().ok(); })),
         ("git config --get gflow.worktree.editor", Box::new(|g| { g.get_config("gflow.worktree.editor").ok(); })),
         ("git config --global gflow.worktree.editor code", Box::new(|g| { g.set_config("gflow.worktree.editor", "code", true).ok(); })),

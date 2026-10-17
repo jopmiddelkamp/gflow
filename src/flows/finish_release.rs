@@ -7,6 +7,7 @@ use crate::flows::{
     resume_hint, run_version_script, tag_at_if_missing, tag_if_missing, tip_landed_somewhere,
 };
 use crate::git::Git;
+use crate::hooks::{HookEvent, TagEvent};
 use crate::hosting::{HostingPlatform, LandedPr, PrBody};
 use crate::repo_config::{BumpStrategy, Mode, RepoConfig};
 use crate::version::{landing_branch_name, SemVer};
@@ -95,12 +96,12 @@ fn announce_next_version(latest: Option<&SemVer>, next: &SemVer, tag: &str) {
 }
 
 /// Cut `tag` at the branch tip (the common case: nothing to wait on).
-fn cut_tag_at_tip(git: &dyn Git, latest: Option<&SemVer>, next: &SemVer, tag: &str) -> Result<(), String> {
+fn cut_tag_at_tip(git: &dyn Git, latest: Option<&SemVer>, next: &SemVer, tag: &str) -> Result<SemVer, String> {
     announce_next_version(latest, next, tag);
     git.create_tag(tag, &format!("chore: bump version to {tag}"))?;
     git.push_tag(tag)?;
     println!("Tagged and pushed: {tag}");
-    Ok(())
+    Ok(next.clone())
 }
 
 pub fn bump_version(
@@ -110,14 +111,15 @@ pub fn bump_version(
     cfg: &RepoConfig,
     major: u32,
     minor: u32,
-) -> Result<(), String> {
+) -> Result<Option<TagEvent>, String> {
     let release = SemVer::new(major, minor, 0);
     let branch = release.release_branch();
 
-    match cfg.mode {
-        Mode::Free => bump_free(git, script, &release, &branch, major, minor, cfg.bump_strategy),
-        Mode::Protected => bump_protected(git, hosting, script, &release, &branch, major, minor, cfg.bump_strategy),
-    }
+    let tagged = match cfg.mode {
+        Mode::Free => Some(bump_free(git, script, &release, &branch, major, minor, cfg.bump_strategy)?),
+        Mode::Protected => bump_protected(git, hosting, script, &release, &branch, major, minor, cfg.bump_strategy)?,
+    };
+    Ok(tagged.map(|tag| TagEvent::new(HookEvent::ReleaseBump, &tag, &branch)))
 }
 
 /// Free mode: no landing PR to wait for, so a version-script commit (if there
@@ -125,7 +127,7 @@ pub fn bump_version(
 /// tip in the same run. The script receives the version whose file state the
 /// next tag must carry: the constant release under rc, the freshly incremented
 /// patch under the patch strategy.
-fn bump_free(git: &dyn Git, script: Option<&dyn VersionScript>, release: &SemVer, branch: &str, major: u32, minor: u32, strategy: BumpStrategy) -> Result<(), String> {
+fn bump_free(git: &dyn Git, script: Option<&dyn VersionScript>, release: &SemVer, branch: &str, major: u32, minor: u32, strategy: BumpStrategy) -> Result<SemVer, String> {
     let (latest, next, tag) = next_version(git, branch, major, minor, release, strategy)?;
 
     if let Some(script) = script {
@@ -145,8 +147,9 @@ fn bump_free(git: &dyn Git, script: Option<&dyn VersionScript>, release: &SemVer
 /// commit is trustworthy, so the RC tag is deferred to that PR's merge commit
 /// rather than cut on a local commit. Order (task brief): consume a landed PR
 /// first, then pure-tagging, then PR reuse, then a fresh script run.
+/// Returns the version tagged in this run; `None` while the tag is deferred.
 #[allow(clippy::too_many_arguments)]
-fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, release: &SemVer, branch: &str, major: u32, minor: u32, strategy: BumpStrategy) -> Result<(), String> {
+fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, release: &SemVer, branch: &str, major: u32, minor: u32, strategy: BumpStrategy) -> Result<Option<SemVer>, String> {
     // The version the script must write — and thus the version branch's
     // name, the PR's title and its commit message. The patch strategy has to
     // read the branch's tags to know it; recomputing it on a later run
@@ -159,8 +162,8 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
     let version_branch = script_version.version_branch(branch);
 
     if let Some(pr) = leg_landed(git, hosting, &version_branch, branch)? {
-        if tag_landed_version_pr(git, &pr, release, strategy, &version_branch)? {
-            return Ok(());
+        if let Some(tagged) = tag_landed_version_pr(git, &pr, release, strategy, &version_branch)? {
+            return Ok(Some(tagged));
         }
         // Already cut on a previous run — this run just tidies up remnants
         // (a version branch the merge didn't delete) and re-evaluates as fresh.
@@ -169,7 +172,7 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
 
     let Some(script) = script else {
         let (latest, next, tag) = next_version(git, branch, major, minor, release, strategy)?;
-        return cut_tag_at_tip(git, latest.as_ref(), &next, &tag);
+        return cut_tag_at_tip(git, latest.as_ref(), &next, &tag).map(Some);
     };
 
     let title = format!("chore: set version {script_version}");
@@ -202,7 +205,7 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
             git.checkout(branch)?;
             git.delete_branch_local(&version_branch)?;
             let (latest, next, tag) = next_version(git, branch, major, minor, release, strategy)?;
-            cut_tag_at_tip(git, latest.as_ref(), &next, &tag)
+            cut_tag_at_tip(git, latest.as_ref(), &next, &tag).map(Some)
         }
         Err(e) => {
             // Best-effort: don't strand the operator on the version branch.
@@ -212,37 +215,36 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
     }
 }
 
-/// Cuts the next tag at a landed version PR's merge commit. False when that
-/// commit already carries the latest tag: a previous run consumed it.
-fn tag_landed_version_pr(git: &dyn Git, pr: &LandedPr, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<bool, String> {
+/// Cuts the next tag at a landed version PR's merge commit and returns it.
+/// `None` when that commit already carries the latest tag: a previous run consumed it.
+fn tag_landed_version_pr(git: &dyn Git, pr: &LandedPr, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<Option<SemVer>, String> {
     let (latest, next, tag) = next_version(git, &release.release_branch(), release.major, release.minor, release, strategy)?;
     let consumed = match &latest {
         Some(l) => git.tag_commit_sha(&l.tag_name())? == pr.merge_commit_sha,
         None => false,
     };
     if consumed {
-        return Ok(false);
+        return Ok(None);
     }
     announce_next_version(latest.as_ref(), &next, &tag);
     git.create_tag_at(&tag, &format!("chore: bump version to {tag}"), &pr.merge_commit_sha)?;
     git.push_tag(&tag)?;
     delete_branches_guarded(git, &[version_branch])?;
     println!("Tagged and pushed: {tag}");
-    Ok(true)
+    Ok(Some(next))
 }
 
 /// The tag waits for the version PR's merge commit. When gflow merged the PR
 /// itself, that commit exists now, so the tag is cut in this same run.
-fn finish_version_pr(git: &dyn Git, hosting: &dyn HostingPlatform, url: &str, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<(), String> {
+fn finish_version_pr(git: &dyn Git, hosting: &dyn HostingPlatform, url: &str, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<Option<SemVer>, String> {
     if complete_version_pr(hosting, url) == VersionPrCompletion::Merged {
         git.fetch()?;
         if let Some(pr) = leg_landed(git, hosting, version_branch, &release.release_branch())? {
-            tag_landed_version_pr(git, &pr, release, strategy, version_branch)?;
-            return Ok(());
+            return tag_landed_version_pr(git, &pr, release, strategy, version_branch);
         }
     }
     println!("The RC tag is deferred until this PR merges. After it merges, re-run 'gflow bump' to cut the tag.");
-    Ok(())
+    Ok(None)
 }
 
 pub fn sync_with_develop(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
@@ -296,7 +298,7 @@ pub fn finish_release(
     main_branch: &str,
     template: Option<&Path>,
     accept_merge_type: bool,
-) -> Result<(), String> {
+) -> Result<Option<TagEvent>, String> {
     if cfg.mode == Mode::Protected {
         return finish_release_protected(git, hosting, cfg, major, minor, main_branch, template, accept_merge_type);
     }
@@ -342,7 +344,8 @@ pub fn finish_release(
         &resume_hint(&release_branch))?;
     push_if_needed(git, "develop")?;
 
-    finish_release_cleanup(git, cfg, &release_branch, main_branch, &release_version, true)
+    finish_release_cleanup(git, cfg, &release_branch, main_branch, &release_version, true)?;
+    Ok(Some(TagEvent::new(HookEvent::ReleaseFinish, &release_version, &release_branch)))
 }
 
 /// `tip_landed` gates deletion: free mode always passes `true` (its own
@@ -389,7 +392,7 @@ fn staging_gate(git: &dyn Git, release_branch: &str, main_branch: &str, major: u
 /// points at, and comparing against it would wrongly call a landed release
 /// unlanded.
 #[allow(clippy::too_many_arguments)]
-fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, main_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
+fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, main_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<Option<TagEvent>, String> {
     let release = SemVer::new(major, minor, 0);
     let release_branch = release.release_branch();
 
@@ -428,7 +431,7 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
                         let landing = ensure_landing_branch(git, &release_branch, main_branch, "gflow finish")?;
                         let url = hosting.create_or_get_pr(&landing, main_branch, &title, landing_pr_body(template))?;
                         announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, main_branch));
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
             }
@@ -456,7 +459,7 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
                 let landing = ensure_landing_branch(git, &release_branch, main_branch, "gflow finish")?;
                 let url = hosting.create_or_get_pr(&landing, main_branch, &title, landing_pr_body(template))?;
                 announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, main_branch));
-                return Ok(());
+                return Ok(None);
             }
         },
     }
@@ -468,7 +471,7 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
         LegState::ContentPresent => content_landed = true,
         LegState::Pending { url, landing } => {
             announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, "develop"));
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -480,5 +483,6 @@ fn finish_release_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &
     // Landing branches go first: source cleanup may remove the worktree the
     // process stands in, after which no git call can run.
     cleanup_landing_branches(git, &release_branch)?;
-    finish_release_cleanup(git, cfg, &release_branch, main_branch, &shipped_version, tip_landed)
+    finish_release_cleanup(git, cfg, &release_branch, main_branch, &shipped_version, tip_landed)?;
+    Ok(Some(TagEvent::new(HookEvent::ReleaseFinish, &shipped_version, &release_branch)))
 }

@@ -7,6 +7,7 @@ use crate::flows::{
     tag_if_missing, tip_landed_somewhere,
 };
 use crate::git::Git;
+use crate::hooks::{HookEvent, TagEvent};
 use crate::hosting::{HostingPlatform, LandedPr};
 use crate::repo_config::{Mode, RepoConfig};
 use crate::version::{landing_branch_name, SemVer};
@@ -22,7 +23,7 @@ pub fn finish_hotfix(
     main_branch: &str,
     template: Option<&Path>,
     accept_merge_type: bool,
-) -> Result<(), String> {
+) -> Result<Option<TagEvent>, String> {
     if cfg.mode == Mode::Protected {
         return finish_hotfix_protected(git, hosting, cfg, major, minor, patch, main_branch, template, accept_merge_type);
     }
@@ -66,7 +67,8 @@ pub fn finish_hotfix(
         push_if_needed(git, release)?;
     }
 
-    finish_hotfix_cleanup(git, cfg, &hotfix_branch, main_branch, &version, &release_branches, true)
+    finish_hotfix_cleanup(git, cfg, &hotfix_branch, main_branch, &version, &release_branches, true)?;
+    Ok(Some(TagEvent::new(HookEvent::HotfixFinish, &version, &hotfix_branch)))
 }
 
 /// `tip_landed` gates deletion: free mode always passes `true` (its own
@@ -103,7 +105,7 @@ pub fn finish_hotfix_cleanup(git: &dyn Git, cfg: &RepoConfig, hotfix_branch: &st
 /// mainline containment *before* consulting the main leg's current PR lookup —
 /// see `finish_release_protected` for why.
 #[allow(clippy::too_many_arguments)]
-fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, patch: u32, main_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {
+fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, patch: u32, main_branch: &str, template: Option<&Path>, accept_merge_type: bool) -> Result<Option<TagEvent>, String> {
     let version = SemVer::new(major, minor, patch);
     let hotfix_branch = version.hotfix_branch();
     let tag = version.tag_name();
@@ -132,7 +134,7 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
                 let landing = ensure_landing_branch(git, &hotfix_branch, main_branch, "gflow finish")?;
                 let url = hosting.create_or_get_pr(&landing, main_branch, &title, landing_pr_body(template))?;
                 announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, main_branch));
-                return Ok(());
+                return Ok(None);
             }
         }
     }
@@ -148,7 +150,7 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
         LegState::ContentPresent => content_landed = true,
         LegState::Pending { url, landing } => {
             announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, "develop"));
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -162,7 +164,7 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
             LegState::ContentPresent => content_landed = true,
             LegState::Pending { url, landing } => {
                 announce_pending_landing(hosting, &title, &url, "gflow finish", &landing_conflict_hint(&landing, release));
-                return Ok(());
+                return Ok(None);
             }
         }
     }
@@ -176,5 +178,6 @@ fn finish_hotfix_protected(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &R
     // Landing branches go first: source cleanup may remove the worktree the
     // process stands in, after which no git call can run.
     cleanup_landing_branches(git, &hotfix_branch)?;
-    finish_hotfix_cleanup(git, cfg, &hotfix_branch, main_branch, &version, &release_branches, tip_landed)
+    finish_hotfix_cleanup(git, cfg, &hotfix_branch, main_branch, &version, &release_branches, tip_landed)?;
+    Ok(Some(TagEvent::new(HookEvent::HotfixFinish, &version, &hotfix_branch)))
 }

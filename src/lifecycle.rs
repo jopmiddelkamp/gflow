@@ -6,10 +6,11 @@
 //! not by a comment. `main.rs` keeps only adapter construction and preflight.
 
 use crate::action::Action;
-use crate::cli::{resolve_action, Commands};
+use crate::cli::{resolve_action, Commands, StartKind};
 use crate::flows::{finish_hotfix, finish_release, finish_work, start};
 use crate::git::branch::BranchType;
 use crate::git::Git;
+use crate::hooks::{HookEnv, Hooks, TagEvent};
 use crate::hosting::HostingPlatform;
 use crate::mainline::resolve_main_branch;
 use crate::menu;
@@ -26,6 +27,7 @@ pub fn run(
     hosting: &dyn HostingPlatform,
     prompter: &dyn Prompter,
     worktree_env: &WorktreeEnv<'_>,
+    hook_env: &HookEnv<'_>,
     repo_cfg: &RepoConfig,
     script: Option<&dyn VersionScript>,
     command: Option<Commands>,
@@ -78,6 +80,13 @@ pub fn run(
         Some(Commands::Finish { accept_merge_type: true, .. }) | Some(Commands::Sync { accept_merge_type: true })
     );
 
+    let no_hooks = matches!(
+        &command,
+        Some(Commands::Start { kind: StartKind::Release { no_hooks: true, .. } })
+            | Some(Commands::Bump { no_hooks: true })
+            | Some(Commands::Finish { no_hooks: true, .. })
+    );
+
     if !matches!(command, Some(Commands::Finish { abort: true, .. })) {
         git.start_fetch();
     }
@@ -95,6 +104,9 @@ pub fn run(
     if git.is_mid_merge()? || git.has_unmerged_paths()? {
         return Err(unresolved_merge_message(resume_state.as_ref()));
     }
+
+    // Before the flow: a finish may remove the worktree this process stands in.
+    let hooks = Hooks::prepare(git, hook_env)?;
 
     println!("Fetching latest...");
     // The flow's first question is about this branch's PRs, and the answer
@@ -149,7 +161,8 @@ pub fn run(
 
     let worktree = if worktree_active { Some(WorktreeContext { env: worktree_env, prompter }) } else { None };
 
-    let result = run_flow(git, hosting, prompter, &branch_type, &branch_name, &action, no_checkout, worktree, resume_state.as_ref(), &main_branch, repo_cfg, script, accept_merge_type);
+    let result = run_flow(git, hosting, prompter, &branch_type, &branch_name, &action, no_checkout, worktree, resume_state.as_ref(), &main_branch, repo_cfg, script, accept_merge_type)
+        .and_then(|event| record_event(hooks.as_ref(), event, no_hooks));
 
     // Lifecycle: clear state on success of a release/hotfix finish. Both a fresh
     // finish and a resume run on the source branch, so its identity is available.
@@ -183,7 +196,22 @@ pub fn run(
         }
     }
 
-    result
+    // Last, after the user's tree is restored: a failing hook never undoes or
+    // reopens the flow, it only fails the run.
+    let fired = match &hooks {
+        Some(hooks) if !no_hooks => hooks.fire_pending(prompter),
+        _ => Ok(()),
+    };
+    result.and(fired)
+}
+
+/// Persist a completed event before the finish state is cleared, so a crash
+/// from here on still fires its hooks on the next run.
+fn record_event(hooks: Option<&Hooks<'_>>, event: Option<TagEvent>, no_hooks: bool) -> Result<(), String> {
+    match (hooks, event) {
+        (Some(hooks), Some(event)) => hooks.record(&event, no_hooks),
+        _ => Ok(()),
+    }
 }
 
 /// Decide which Action to run given the parsed command, current branch, and
@@ -325,7 +353,7 @@ fn run_flow(
     repo_cfg: &RepoConfig,
     script: Option<&dyn VersionScript>,
     accept_merge_type: bool,
-) -> Result<(), String> {
+) -> Result<Option<TagEvent>, String> {
     // Fast-forward the current branch to origin when the flow will operate on
     // this checkout and we're not resuming (on resume the user may be on
     // main/develop after conflict resolution — syncing that branch is harmless
@@ -338,36 +366,42 @@ fn run_flow(
         }
     }
 
-    match action {
+    let event = match action {
         Action::StartWorkBranch { prefix, name, from, no_checkout, .. } => {
             start::start_work_branch(git, prefix, name, from, *no_checkout, worktree)?;
+            None
         }
         Action::StartRelease { release_type, .. } => {
-            start::start_release(git, prompter, hosting, script, repo_cfg, *release_type, main_branch, worktree)?;
+            start::start_release(git, prompter, hosting, script, repo_cfg, *release_type, main_branch, worktree)?
         }
         Action::StartReleaseFix { name, no_checkout, .. } => {
             start::start_release_fix(git, hosting, repo_cfg, main_branch, name, *no_checkout, worktree)?;
+            None
         }
         Action::StartHotfixFix { name, no_checkout, .. } => {
             start::start_hotfix_fix(git, hosting, repo_cfg, name, *no_checkout, worktree, main_branch, script)?;
+            None
         }
         Action::FinishWorkBranch { breaking, base } => {
             let template = resolve_pr_template(git, branch_type)?;
             finish_work::finish_work_branch(git, hosting, prompter, branch_type, *breaking, base.clone(), template.as_deref(), accept_merge_type)?;
+            None
         }
         Action::FinishReleaseFix => {
             let template = resolve_pr_template(git, branch_type)?;
             finish_work::finish_release_fix(git, hosting, branch_type, template.as_deref(), accept_merge_type)?;
+            None
         }
         Action::FinishHotfixFix => {
             let template = resolve_pr_template(git, branch_type)?;
             finish_work::finish_hotfix_fix(git, hosting, branch_type, template.as_deref(), accept_merge_type)?;
+            None
         }
         Action::BumpVersion => {
             let BranchType::Release { major, minor, .. } = branch_type else {
                 unreachable!("BumpVersion action only from Release branch");
             };
-            finish_release::bump_version(git, hosting, script, repo_cfg, *major, *minor)?;
+            finish_release::bump_version(git, hosting, script, repo_cfg, *major, *minor)?
         }
         Action::SyncWithDevelop => {
             let BranchType::Release { major, minor, .. } = branch_type else {
@@ -375,6 +409,7 @@ fn run_flow(
             };
             let template = resolve_landing_template(git, repo_cfg, "release")?;
             finish_release::sync_with_develop(git, hosting, repo_cfg, *major, *minor, template.as_deref(), accept_merge_type)?;
+            None
         }
         Action::FinishRelease => {
             // On resume, prefer the state's version (we may not be on the release branch).
@@ -387,7 +422,7 @@ fn run_flow(
                 (*major, *minor)
             };
             let template = resolve_landing_template(git, repo_cfg, "release")?;
-            finish_release::finish_release(git, hosting, repo_cfg, major, minor, main_branch, template.as_deref(), accept_merge_type)?;
+            finish_release::finish_release(git, hosting, repo_cfg, major, minor, main_branch, template.as_deref(), accept_merge_type)?
         }
         Action::FinishHotfix => {
             let (major, minor, patch) = if let Some(s) = resume_state {
@@ -399,14 +434,14 @@ fn run_flow(
                 (*major, *minor, *patch)
             };
             let template = resolve_landing_template(git, repo_cfg, "hotfix")?;
-            finish_hotfix::finish_hotfix(git, hosting, repo_cfg, major, minor, patch, main_branch, template.as_deref(), accept_merge_type)?;
+            finish_hotfix::finish_hotfix(git, hosting, repo_cfg, major, minor, patch, main_branch, template.as_deref(), accept_merge_type)?
         }
         Action::AbortFinish => {
             unreachable!("AbortFinish is handled before run_flow");
         }
-    }
+    };
 
-    Ok(())
+    Ok(event)
 }
 
 /// Resolve the PR template at the composition boundary, anchored to the

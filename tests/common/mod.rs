@@ -415,6 +415,12 @@ impl Git for MockGit {
         Ok(self.git_dir.clone())
     }
 
+    /// The mock models a main tree, where the common dir is the git dir.
+    fn git_common_dir(&self) -> Result<PathBuf, String> {
+        self.record("git_common_dir".to_string())?;
+        Ok(self.git_dir.clone())
+    }
+
     fn remote_url(&self) -> Result<String, String> {
         self.record("remote_url".to_string())?;
         if self.fail_remote_url {
@@ -1058,4 +1064,45 @@ pub fn tmp_dir(prefix: &str) -> TempDir {
     let dir = std::env::temp_dir().join(format!("{prefix}-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     TempDir(dir)
+}
+
+/// One recorded hook run: the command, its cwd, and its environment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HookRun {
+    pub command: String,
+    pub cwd: PathBuf,
+    pub env: Vec<(String, String)>,
+}
+
+pub struct MockHookShell {
+    pub runs: RefCell<Vec<HookRun>>,
+    /// Per-command outcome; a missing command exits 0. `Err` = the shell could
+    /// not be started, `Ok(None)` = killed by a signal.
+    pub outcomes: HashMap<String, Result<Option<i32>, String>>,
+    /// Simulates a crash: panic right after this many commands have finished.
+    pub crash_after: Option<usize>,
+}
+
+impl MockHookShell {
+    pub fn new() -> Self {
+        Self { runs: RefCell::new(Vec::new()), outcomes: HashMap::new(), crash_after: None }
+    }
+
+    pub fn commands(&self) -> Vec<String> {
+        self.runs.borrow().iter().map(|r| r.command.clone()).collect()
+    }
+}
+
+impl gflow::hooks::HookShell for MockHookShell {
+    fn run(&self, command: &str, cwd: &Path, env: &[(&'static str, String)]) -> Result<Option<i32>, String> {
+        self.runs.borrow_mut().push(HookRun {
+            command: command.to_string(),
+            cwd: cwd.to_path_buf(),
+            env: env.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+        });
+        if self.crash_after == Some(self.runs.borrow().len()) {
+            panic!("simulated crash after hook command {}", self.runs.borrow().len());
+        }
+        self.outcomes.get(command).cloned().unwrap_or(Ok(Some(0)))
+    }
 }
