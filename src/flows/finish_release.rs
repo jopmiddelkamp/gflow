@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::flows::{
-    announce_pending_landing, announce_version_pr, cleanup_landing_branches, delete_branches_guarded, delete_source_branch, ensure_landing_branch,
+    announce_pending_landing, announce_version_pr, complete_version_pr, VersionPrCompletion, cleanup_landing_branches, delete_branches_guarded, delete_source_branch, ensure_landing_branch,
     landing_conflict_hint, finish_leg_landed, land_leg_strict, landing_pr_body, leg_landed, merge_where_checked_out, refuse_open_legacy_pr, LegState,
     merge_into, push_if_needed, push_tag_if_missing, report_commits_past_landing, require_clean_tree,
     resume_hint, run_version_script, tag_at_if_missing, tag_if_missing, tip_landed_somewhere,
@@ -147,25 +147,24 @@ fn bump_free(git: &dyn Git, script: Option<&dyn VersionScript>, release: &SemVer
 /// first, then pure-tagging, then PR reuse, then a fresh script run.
 #[allow(clippy::too_many_arguments)]
 fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, release: &SemVer, branch: &str, major: u32, minor: u32, strategy: BumpStrategy) -> Result<(), String> {
-    let chore_branch = release.release_chore_branch("set-version");
+    // The version the script must write — and thus the version branch's
+    // name, the PR's title and its commit message. The patch strategy has to
+    // read the branch's tags to know it; recomputing it on a later run
+    // converges (the next patch tag only ever appears after this PR's merge
+    // is consumed).
+    let script_version = match strategy {
+        BumpStrategy::Rc => release.clone(),
+        BumpStrategy::Patch => next_version(git, branch, major, minor, release, strategy)?.1,
+    };
+    let version_branch = script_version.version_branch(branch);
 
-    if let Some(pr) = leg_landed(git, hosting, &chore_branch, branch)? {
-        let (latest, next, tag) = next_version(git, branch, major, minor, release, strategy)?;
-        let consumed = match &latest {
-            Some(l) => git.tag_commit_sha(&l.tag_name())? == pr.merge_commit_sha,
-            None => false,
-        };
-        if !consumed {
-            announce_next_version(latest.as_ref(), &next, &tag);
-            git.create_tag_at(&tag, &format!("chore: bump version to {tag}"), &pr.merge_commit_sha)?;
-            git.push_tag(&tag)?;
-            delete_branches_guarded(git, &[&chore_branch])?;
-            println!("Tagged and pushed: {tag}");
+    if let Some(pr) = leg_landed(git, hosting, &version_branch, branch)? {
+        if tag_landed_version_pr(git, &pr, release, strategy, &version_branch)? {
             return Ok(());
         }
         // Already cut on a previous run — this run just tidies up remnants
-        // (a chore branch the merge didn't delete) and re-evaluates as fresh.
-        delete_branches_guarded(git, &[&chore_branch])?;
+        // (a version branch the merge didn't delete) and re-evaluates as fresh.
+        delete_branches_guarded(git, &[&version_branch])?;
     }
 
     let Some(script) = script else {
@@ -173,20 +172,12 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
         return cut_tag_at_tip(git, latest.as_ref(), &next, &tag);
     };
 
-    // The version the script must write — and thus the PR's title and commit
-    // message. The patch strategy has to read the branch's tags to know it;
-    // recomputing it on a later run converges (the next patch tag only ever
-    // appears after this PR's merge is consumed).
-    let script_version = match strategy {
-        BumpStrategy::Rc => release.clone(),
-        BumpStrategy::Patch => next_version(git, branch, major, minor, release, strategy)?.1,
-    };
     let title = format!("chore: set version {script_version}");
 
-    if git.remote_branch_exists(&chore_branch)? {
-        let url = hosting.create_or_get_pr(&chore_branch, branch, &title, PrBody::NativeDefault)?;
-        announce_deferred(hosting, &title, &url);
-        return Ok(());
+    if git.remote_branch_exists(&version_branch)? {
+        let url = hosting.create_or_get_pr(&version_branch, branch, &title, PrBody::NativeDefault)?;
+        announce_version_pr(hosting, &title, &url);
+        return finish_version_pr(git, hosting, &url, release, strategy, &version_branch);
     }
 
     require_clean_tree(git)?;
@@ -194,35 +185,64 @@ fn bump_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: Option<&
     // interrupted before the script committed or pushed). It is machine-owned,
     // so gflow clears it itself rather than dying on git's raw "branch already
     // exists" — remote-exists is already handled by the reuse path above.
-    if git.local_branch_exists(&chore_branch)? {
-        git.delete_branch_local(&chore_branch)?;
+    if git.local_branch_exists(&version_branch)? {
+        git.delete_branch_local(&version_branch)?;
     }
-    git.create_branch(&chore_branch, branch)?;
+    git.create_branch(&version_branch, branch)?;
     match run_version_script(git, script, &script_version) {
         Ok(true) => {
-            git.push(&chore_branch)?;
-            let url = hosting.create_or_get_pr(&chore_branch, branch, &title, PrBody::NativeDefault)?;
-            announce_deferred(hosting, &title, &url);
+            git.push(&version_branch)?;
+            let url = hosting.create_or_get_pr(&version_branch, branch, &title, PrBody::NativeDefault)?;
+            announce_version_pr(hosting, &title, &url);
+            // Off the version branch first: a merge now deletes it.
             git.checkout(branch)?;
-            Ok(())
+            finish_version_pr(git, hosting, &url, release, strategy, &version_branch)
         }
         Ok(false) => {
             git.checkout(branch)?;
-            git.delete_branch_local(&chore_branch)?;
+            git.delete_branch_local(&version_branch)?;
             let (latest, next, tag) = next_version(git, branch, major, minor, release, strategy)?;
             cut_tag_at_tip(git, latest.as_ref(), &next, &tag)
         }
         Err(e) => {
-            // Best-effort: don't strand the operator on the chore branch.
+            // Best-effort: don't strand the operator on the version branch.
             let _ = git.checkout(branch);
             Err(e)
         }
     }
 }
 
-fn announce_deferred(hosting: &dyn HostingPlatform, title: &str, pr_url: &str) {
-    announce_version_pr(hosting, title, pr_url);
+/// Cuts the next tag at a landed version PR's merge commit. False when that
+/// commit already carries the latest tag: a previous run consumed it.
+fn tag_landed_version_pr(git: &dyn Git, pr: &LandedPr, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<bool, String> {
+    let (latest, next, tag) = next_version(git, &release.release_branch(), release.major, release.minor, release, strategy)?;
+    let consumed = match &latest {
+        Some(l) => git.tag_commit_sha(&l.tag_name())? == pr.merge_commit_sha,
+        None => false,
+    };
+    if consumed {
+        return Ok(false);
+    }
+    announce_next_version(latest.as_ref(), &next, &tag);
+    git.create_tag_at(&tag, &format!("chore: bump version to {tag}"), &pr.merge_commit_sha)?;
+    git.push_tag(&tag)?;
+    delete_branches_guarded(git, &[version_branch])?;
+    println!("Tagged and pushed: {tag}");
+    Ok(true)
+}
+
+/// The tag waits for the version PR's merge commit. When gflow merged the PR
+/// itself, that commit exists now, so the tag is cut in this same run.
+fn finish_version_pr(git: &dyn Git, hosting: &dyn HostingPlatform, url: &str, release: &SemVer, strategy: BumpStrategy, version_branch: &str) -> Result<(), String> {
+    if complete_version_pr(hosting, url) == VersionPrCompletion::Merged {
+        git.fetch()?;
+        if let Some(pr) = leg_landed(git, hosting, version_branch, &release.release_branch())? {
+            tag_landed_version_pr(git, &pr, release, strategy, version_branch)?;
+            return Ok(());
+        }
+    }
     println!("The RC tag is deferred until this PR merges. After it merges, re-run 'gflow bump' to cut the tag.");
+    Ok(())
 }
 
 pub fn sync_with_develop(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, major: u32, minor: u32, template: Option<&Path>, accept_merge_type: bool) -> Result<(), String> {

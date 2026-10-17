@@ -114,7 +114,7 @@ gitGraph
 | `refactor/{name}` | `develop` | `develop` (PR) | Code restructuring |
 | `release/{major}.{minor}.{patch}` | `develop` | `main` + `develop` | Release preparation |
 | `release-fix/{v}/{name}` | `release/{v}` | `release/{v}` (PR) | Fixes during release |
-| `release-chore/{v}/set-version` | `release/{v}` | `release/{v}` (PR) | gflow-created: version-script commit that can't land directly ([Landing Modes](#landing-modes--version-script)) |
+| `version/{v}-into-{target}` | `develop` or `release/{v}` | the same branch (PR) | gflow-created in protected mode: a version-script commit for a branch already on origin ([Landing Modes](#landing-modes--version-script)) |
 | `hotfix/{major}.{minor}.{patch}` | `main` | `main` + `develop` + open `release/*` | Urgent production fix |
 | `hotfix-fix/{v}/{name}` | `hotfix/{v}` | `hotfix/{v}` (PR) | Fixes during hotfix |
 
@@ -281,7 +281,7 @@ Every PR gflow opens must be completed with a specific button, and gflow prints
 a hard-to-miss banner next to the PR URL saying which one:
 
 - **Work and fix PRs** (feature/fix/chore/docs/refactor, `release-fix`,
-  `hotfix-fix`, `release-chore`, version PRs) → **Squash**. One commit per
+  `hotfix-fix`, `version/*` PRs) → **Squash**. One commit per
   change lands on the target.
 - **Protected-mode landing PRs** (`landing/*` into `main`/`develop`/`release/*`)
   → **Merge commit**. The merge keeps history connected, which the finish
@@ -675,7 +675,7 @@ One consequence to plan for: under `patch` every tag is a clean `vX.Y.Z` — the
 
 Use `mode=protected` when `main`/`develop` require pull requests (branch protection, required reviews). In this mode:
 
-- **gflow never merges a PR.** Every landing that would otherwise be a direct push instead opens (or reuses) a PR and prints its URL.
+- **gflow never merges a landing PR.** Every landing that would otherwise be a direct push instead opens (or reuses) a PR and prints its URL. The one exception is gflow's own version PRs; see [`version/*` branches](#version-branches).
 - **Every landing PR's head is a throwaway `landing/*` branch** cut from the source — `landing/release-1.2.0-into-main`, `landing/hotfix-1.1.1-into-release-1.2.0`, and so on. The release/hotfix branch itself is never a PR head, so nothing (a conflict resolution, the platform's auto-delete-head-branches setting) can ever touch it. gflow creates, refreshes, and deletes these branches itself; a landing that predates newer source commits is re-opened with a refreshed landing branch, so no commit can silently miss a target.
 - `finish`, `bump`, and `sync` **exit 0** with the PR pending — nothing is left half-done, there's just a human step in between. Re-run the same command after the PR is merged; it continues from there.
 - Landings happen **one PR per run**, in order (`main`, then `develop`, then — for hotfixes — each open `release/*` branch). Only the **last** landing deletes the source branch (and every `landing/*` branch, orphans included) — unless `keep-release-branches=true`, or its tip provably landed nowhere, in which case gflow keeps the branch and tells you how to remove it yourself.
@@ -758,20 +758,26 @@ Make it executable: chmod +x .gflow/set-version.sh && git update-index --chmod=+
 
 `git update-index --chmod=+x` is there because git tracks the executable bit itself — a local `chmod +x` alone doesn't survive a fresh clone. This differs from the platform-mismatch error above in *when* it can fire: platform mismatch is resolved eagerly, once, at the start of every command, so it fires no matter what you run; a not-executable script is only ever spawned by the commands that actually run it (cutting a release/hotfix branch, `gflow bump`) — that asymmetry can be surprising the first time you hit it.
 
-#### `version/*` and `release-chore/*/set-version` branches
+#### `version/*` branches
 
-In protected mode, a version commit that can't land directly goes out as its own PR from a branch gflow creates:
+In protected mode, a version commit for a branch that is already on origin goes out as its own PR, from a branch named after the version and its target:
 
-- `version/X.Y.Z` — the develop version bump that follows a release cut.
-- `release-chore/X.Y.0/set-version` — a version bump needed on an already-pushed release branch (during `gflow bump`).
+- `version/X.Y.Z-into-develop` — the develop version bump that follows a release cut.
+- `version/X.Y.Z-into-release-X.Y.0` — a version bump on an already-pushed release branch (during `gflow bump`; only `bump-strategy=patch` changes the version there).
 
-**gflow creates and manages these — merge the PR, don't commit to them yourself.** If a human needs to intervene on a `release-chore/*` branch, it finishes exactly like a `release-fix` branch (`gflow finish` from it opens/updates a PR into its release branch); it has no `--base` flag, same as `release-fix`/`hotfix-fix`.
+A new `release/*` or `hotfix/*` branch never needs one: gflow commits its version before the first push. Free mode never needs one: gflow commits the version on the branch itself.
 
-`gflow bump` deletes the `release-chore/*/set-version` branch itself the next time it revisits it, but nothing ever revisits `version/*` after its PR merges, so it stays on the remote. Enable your hosting platform's automatic head-branch deletion (GitHub: "Automatically delete head branches"; Azure DevOps: the branch policy's auto-complete deletion option) to avoid the buildup, or delete it by hand.
+**gflow completes these PRs itself**, in this order:
+
+1. **Auto-complete** with squash (`gh pr merge --auto --squash --delete-branch` / `az repos pr update --auto-complete true --squash true --delete-source-branch true`). The platform merges once required checks and reviews pass.
+2. **Merge now** with squash, when the platform offers no auto-complete. `gflow bump` then cuts its tag in the same run.
+3. **You merge it**, when both fail. gflow prints a warning with both reasons; the command still succeeds.
+
+These branches are machine-owned: don't commit to them, and `gflow finish` does not recognize them. Older `release-chore/*` branches are no longer recognized either — merge or close their PRs before you upgrade.
 
 #### Deferred RC tags
 
-gflow never tags a commit that isn't yet on the branch being tagged. When `gflow bump` in protected mode needs a version-script commit on an already-pushed release branch, it opens the `release-chore/.../set-version` PR and defers the tag:
+gflow never tags a commit that isn't yet on the branch being tagged. When `gflow bump` in protected mode needs a version-script commit on an already-pushed release branch, it opens the `version/X.Y.Z-into-release-X.Y.0` PR, completes it as above, and defers the tag until the merge:
 
 ```
 Copied PR title + URL to clipboard.

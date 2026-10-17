@@ -115,8 +115,6 @@ fn finish_resolves_each_branch_type_to_its_action() {
             Ok(Action::FinishReleaseFix)),
         ("hotfix_fix", None, None, BranchType::HotfixFix { major: 1, minor: 0, patch: 1, name: "urgent".to_string() },
             Ok(Action::FinishHotfixFix)),
-        ("release_chore", None, None, BranchType::ReleaseChore { major: 1, minor: 1, patch: 0, name: "set-version".to_string() },
-            Ok(Action::FinishReleaseChore)),
         ("main", None, None, BranchType::Main,
             Err("Nothing to finish on this branch.".to_string())),
         ("develop", None, None, BranchType::Develop,
@@ -136,7 +134,6 @@ fn finish_rejects_base_on_every_fixed_target_branch() {
         ("hotfix", BranchType::Hotfix { major: 1, minor: 0, patch: 1 }),
         ("release_fix", BranchType::ReleaseFix { major: 1, minor: 2, patch: 0, name: "broken-login".to_string() }),
         ("hotfix_fix", BranchType::HotfixFix { major: 1, minor: 0, patch: 1, name: "urgent".to_string() }),
-        ("release_chore", BranchType::ReleaseChore { major: 1, minor: 1, patch: 0, name: "set-version".to_string() }),
     ] {
         let cmd = Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false };
         assert_eq!(

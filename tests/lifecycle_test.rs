@@ -603,10 +603,9 @@ fn start_hotfix_fix_dispatches_and_creates_the_hotfix_branch() {
 }
 
 #[test]
-fn finish_fix_and_chore_branches_dispatch_and_target_their_parent_branch() {
+fn finish_fix_branches_dispatch_and_target_their_parent_branch() {
     for (current, parent) in [
         ("release-fix/2.5.0/db-index", "release/2.5.0"),
-        ("release-chore/2.5.0/set-version", "release/2.5.0"),
         ("hotfix-fix/2.5.1/npe", "hotfix/2.5.1"),
     ] {
         let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-test");
@@ -964,7 +963,6 @@ fn only_work_finishes_prefetch_their_prs() {
         ("feature/x", feature_finish, true),
         ("release-fix/2.5.0/login", finish_cmd(), true),
         ("hotfix-fix/2.4.1/login", finish_cmd(), true),
-        ("release-chore/2.5.0/version", finish_cmd(), true),
         ("develop", start_release, false),
     ] {
         let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-prefetch-scope");
@@ -1233,7 +1231,6 @@ fn missing_template_root_stops_each_finish_before_publication() {
         ("feature/login", finish(), Mode::Free),
         ("release-fix/2.5.0/login", finish(), Mode::Free),
         ("hotfix-fix/2.4.1/login", finish(), Mode::Free),
-        ("release-chore/2.5.0/version", finish(), Mode::Free),
         (
             "release/2.5.0",
             Commands::Sync {
@@ -1272,7 +1269,6 @@ fn failed_fix_finish_keeps_branches_and_reports_the_hosting_error() {
     for branch in [
         "release-fix/2.5.0/login",
         "hotfix-fix/2.4.1/login",
-        "release-chore/2.5.0/version",
     ] {
         let git = git_on(branch);
         let mut hosting = MockHosting::new();

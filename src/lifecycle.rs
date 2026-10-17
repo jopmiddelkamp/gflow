@@ -99,7 +99,7 @@ pub fn run(
     println!("Fetching latest...");
     // The flow's first question is about this branch's PRs, and the answer
     // does not depend on the fetch.
-    if matches!(action, Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix | Action::FinishReleaseChore) {
+    if matches!(action, Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix) {
         hosting.prefetch_prs(&branch_name)?;
     }
     git.fetch()?;
@@ -363,10 +363,6 @@ fn run_flow(
             let template = resolve_pr_template(git, branch_type)?;
             finish_work::finish_hotfix_fix(git, hosting, branch_type, template.as_deref(), accept_merge_type)?;
         }
-        Action::FinishReleaseChore => {
-            let template = resolve_pr_template(git, branch_type)?;
-            finish_work::finish_release_chore(git, hosting, branch_type, template.as_deref(), accept_merge_type)?;
-        }
         Action::BumpVersion => {
             let BranchType::Release { major, minor, .. } = branch_type else {
                 unreachable!("BumpVersion action only from Release branch");
@@ -490,8 +486,6 @@ mod tests {
                 "create_or_get_pr:release-fix/2.5.0/login:release/2.5.0:fix: login"),
             ("hotfix-fix/2.4.1/login", Action::FinishHotfixFix,
                 "create_or_get_pr:hotfix-fix/2.4.1/login:hotfix/2.4.1:fix: login"),
-            ("release-chore/2.5.0/version", Action::FinishReleaseChore,
-                "create_or_get_pr:release-chore/2.5.0/version:release/2.5.0:chore: version"),
             ("release/2.5.0", Action::BumpVersion,
                 "create_tag:v2.5.0-rc.2:chore: bump version to v2.5.0-rc.2"),
             ("release/2.5.0", Action::SyncWithDevelop,
@@ -536,8 +530,7 @@ mod tests {
             assert!(hosting.calls().is_empty());
 
             let mode = match action {
-                Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix
-                    | Action::FinishReleaseChore => Mode::Free,
+                Action::FinishWorkBranch { .. } | Action::FinishReleaseFix | Action::FinishHotfixFix => Mode::Free,
                 Action::SyncWithDevelop | Action::FinishRelease | Action::FinishHotfix => Mode::Protected,
                 _ => continue,
             };

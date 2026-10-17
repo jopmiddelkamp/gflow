@@ -171,10 +171,9 @@ fn fix_family_branch_names() {
 }
 
 #[test]
-fn release_chore_branch_name() {
-    assert_eq!(SemVer::new(1, 1, 0).release_chore_branch("set-version"), "release-chore/1.1.0/set-version");
-    // Pre-release dropped: the chore branches off the release line, not off an RC.
-    assert_eq!(SemVer::new(1, 1, 0).with_rc(1).release_chore_branch("set-version"), "release-chore/1.1.0/set-version");
+fn version_branch_names_the_version_and_its_flattened_target() {
+    assert_eq!(SemVer::new(1, 2, 0).version_branch("develop"), "version/1.2.0-into-develop");
+    assert_eq!(SemVer::new(1, 1, 1).version_branch("release/1.1.0"), "version/1.1.1-into-release-1.1.0");
 }
 
 #[test]
@@ -191,8 +190,8 @@ fn generated_branch_names_round_trip_through_parse() {
         BranchType::ReleaseFix { major: 2, minor: 6, patch: 0, name: "db-index".to_string() });
     assert_eq!(BranchType::parse(&v.hotfix_fix_branch("npe")),
         BranchType::HotfixFix { major: 2, minor: 6, patch: 0, name: "npe".to_string() });
-    assert_eq!(BranchType::parse(&v.release_chore_branch("set-version")),
-        BranchType::ReleaseChore { major: 2, minor: 6, patch: 0, name: "set-version".to_string() });
+    // Machine-owned: a version branch is no branch type a human finishes.
+    assert_eq!(BranchType::parse(&v.version_branch("release/2.6.0")), BranchType::Other);
 }
 
 #[test]

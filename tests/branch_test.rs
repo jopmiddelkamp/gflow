@@ -91,36 +91,10 @@ fn only_branches_carrying_a_name_expose_one() {
 }
 
 #[test]
-fn parse_release_chore() {
-    assert_eq!(BranchType::parse("release-chore/1.1.0/set-version"), BranchType::ReleaseChore { major: 1, minor: 1, patch: 0, name: "set-version".to_string() });
-}
-
-#[test]
-fn release_chore_needs_both_a_valid_version_and_a_name() {
-    assert_eq!(BranchType::parse("release-chore/1.1.0"), BranchType::Other, "no name segment");
-    assert_eq!(BranchType::parse("release-chore/1.1.0/"), BranchType::Other, "empty name");
-    assert_eq!(BranchType::parse("release-chore/next/set-version"), BranchType::Other, "bad version");
-}
-
-#[test]
-fn release_chore_exposes_its_name() {
-    assert_eq!(BranchType::parse("release-chore/1.1.0/set-version").name(), Some("set-version"));
-}
-
-#[test]
-fn release_chore_has_a_fixed_finish_target() {
-    assert!(BranchType::parse("release-chore/1.1.0/set-version").has_fixed_finish_target());
-}
-
-#[test]
-fn release_chore_is_not_a_work_branch() {
-    assert!(!BranchType::parse("release-chore/1.1.0/set-version").is_work_branch());
-    assert_eq!(BranchType::parse("release-chore/1.1.0/set-version").work_kind(), None);
-}
-
-#[test]
-fn release_chore_pr_template_keys() {
-    assert_eq!(BranchType::parse("release-chore/1.1.0/set-version").pr_template_keys(), Some(("release-chore", "chore")));
+fn release_chore_branches_are_no_longer_recognized() {
+    // 6.0.0: version commits travel on machine-owned version/* branches; the
+    // old release-chore/* type is gone, so such a branch is just "other".
+    assert_eq!(BranchType::parse("release-chore/1.1.0/set-version"), BranchType::Other);
 }
 
 #[test]

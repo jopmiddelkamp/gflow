@@ -1,4 +1,4 @@
-use crate::flows::{announce_version_pr, open_versioned_branches, require_clean_tree, run_version_script};
+use crate::flows::{announce_version_pr, complete_version_pr, open_versioned_branches, require_clean_tree, run_version_script};
 use crate::git::Git;
 use crate::hosting::{HostingPlatform, PrBody};
 use crate::prompt::Prompter;
@@ -245,12 +245,13 @@ fn bump_develop(git: &dyn Git, hosting: &dyn HostingPlatform, script: &dyn Versi
 /// `version/*` branch instead of recreating it — the resume case
 /// after a prior run's crash between branch creation and the version PR.
 fn bump_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: &dyn VersionScript, dev: &SemVer) -> Result<(), String> {
-    let version_branch = format!("version/{dev}");
+    let version_branch = dev.version_branch("develop");
     let title = format!("chore: set version {dev}");
 
     if git.remote_branch_exists(&version_branch)? {
         let url = hosting.create_or_get_pr(&version_branch, "develop", &title, PrBody::NativeDefault)?;
         announce_version_pr(hosting, &title, &url);
+        complete_version_pr(hosting, &url);
         return Ok(());
     }
 
@@ -268,6 +269,9 @@ fn bump_develop_protected(git: &dyn Git, hosting: &dyn HostingPlatform, script: 
             git.push(&version_branch)?;
             let url = hosting.create_or_get_pr(&version_branch, "develop", &title, PrBody::NativeDefault)?;
             announce_version_pr(hosting, &title, &url);
+            // Off the version branch first: a merge now deletes it.
+            git.checkout("develop")?;
+            complete_version_pr(hosting, &url);
             Ok(())
         }
         Ok(false) => {

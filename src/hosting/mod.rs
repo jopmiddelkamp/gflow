@@ -59,6 +59,11 @@ pub trait HostingPlatform {
     /// landing-branch migration: an open landing PR from an older gflow (head =
     /// the release/hotfix branch itself) must be surfaced, not duplicated.
     fn open_pr_to(&self, head: &str, base: &str) -> Result<Option<String>>;
+    /// Let the platform squash-merge the PR at `url` once its checks pass,
+    /// and delete its head branch.
+    fn enable_auto_complete(&self, url: &str) -> Result<()>;
+    /// Squash-merge the PR at `url` now and delete its head branch.
+    fn merge_pr(&self, url: &str) -> Result<()>;
     /// Load the PRs of `head` now, while other work runs, for the lookups that
     /// follow. A provider whose lookups are cheap loads nothing.
     fn prefetch_prs(&self, _head: &str) -> Result<()> {

@@ -594,3 +594,72 @@ fn azure_rejects_malformed_merged_rows_instead_of_authorizing_cleanup() {
         assert!(error.contains("missing-fields"));
     }
 }
+
+// --- Completing gflow's own version PRs ---
+
+#[test]
+fn gh_auto_complete_squashes_and_deletes_the_branch_once_checks_pass() {
+    let runner = MockCliRunner::scripted(&[Ok("")]);
+
+    gh(&runner).enable_auto_complete("https://github.com/o/r/pull/7").unwrap();
+
+    assert_eq!(runner.calls(), vec!["gh pr merge https://github.com/o/r/pull/7 --auto --squash --delete-branch"]);
+}
+
+#[test]
+fn gh_merge_now_squashes_and_deletes_the_branch() {
+    let runner = MockCliRunner::scripted(&[Ok("")]);
+
+    gh(&runner).merge_pr("https://github.com/o/r/pull/7").unwrap();
+
+    assert_eq!(runner.calls(), vec!["gh pr merge https://github.com/o/r/pull/7 --squash --delete-branch"]);
+}
+
+#[test]
+fn gh_completion_failures_reach_the_caller() {
+    let runner = MockCliRunner::scripted(&[Err("auto-merge is not allowed"), Err("review required")]);
+
+    assert_eq!(gh(&runner).enable_auto_complete("https://github.com/o/r/pull/7"), Err("auto-merge is not allowed".to_string()));
+    assert_eq!(gh(&runner).merge_pr("https://github.com/o/r/pull/7"), Err("review required".to_string()));
+}
+
+#[test]
+fn az_auto_complete_squashes_and_deletes_the_source_branch() {
+    let runner = az_scripted(&[Ok("")]);
+
+    ado(&runner).enable_auto_complete("https://dev.azure.com/beans/Shop/_git/shop/pullrequest/7").unwrap();
+
+    assert_eq!(az_calls(&runner), vec![
+        "az repos pr update --id 7 --organization https://dev.azure.com/beans --auto-complete true --squash true --delete-source-branch true",
+    ]);
+}
+
+#[test]
+fn az_merge_now_completes_with_squash_and_deletes_the_source_branch() {
+    let runner = az_scripted(&[Ok("")]);
+
+    ado(&runner).merge_pr("https://dev.azure.com/beans/Shop/_git/shop/pullrequest/7").unwrap();
+
+    assert_eq!(az_calls(&runner), vec![
+        "az repos pr update --id 7 --organization https://dev.azure.com/beans --status completed --squash true --delete-source-branch true",
+    ]);
+}
+
+#[test]
+fn az_completion_refuses_a_url_without_a_pr_id_before_any_call() {
+    let runner = az_scripted(&[]);
+
+    let err = ado(&runner).merge_pr("https://dev.azure.com/beans/Shop/_git/shop").unwrap_err();
+
+    assert_eq!(err, "Unexpected az pull request id: 'shop'");
+    assert!(runner.calls().is_empty(), "calls: {:?}", runner.calls());
+}
+
+#[test]
+fn az_completion_failure_names_the_login_commands() {
+    let runner = az_scripted(&[Err("TF401027: permission")]);
+
+    let err = ado(&runner).enable_auto_complete("https://dev.azure.com/beans/Shop/_git/shop/pullrequest/7").unwrap_err();
+
+    assert!(err.starts_with("TF401027: permission\n"), "{err}");
+}
