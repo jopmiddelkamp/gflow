@@ -3,10 +3,14 @@
 
 use std::path::Path;
 
+use crate::hooks::HookEvent;
 use crate::prompt::Prompter;
 use crate::repo_config::{self, BumpStrategy, Layers, Mode, RepoConfig, NOT_INITIALISED};
 
-const ALREADY: &str = "Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy).";
+fn already_initialised() -> String {
+    let hook_keys: Vec<String> = HookEvent::ALL.iter().map(|e| e.key()).collect();
+    format!("Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy, {}).", hook_keys.join(", "))
+}
 
 /// Resolve the config layer stack, running the wizard first when *no* layer
 /// states a policy and the run is interactive. A global `~/.gflow/config` is
@@ -33,7 +37,7 @@ pub fn ensure(
 /// `gflow init`.
 pub fn run(prompter: &dyn Prompter, repo_root: &Path) -> Result<(), String> {
     if repo_config::exists(repo_root) {
-        return Err(ALREADY.to_string());
+        return Err(already_initialised());
     }
     wizard(prompter, repo_root).map(|_| ())
 }
