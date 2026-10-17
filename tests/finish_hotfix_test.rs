@@ -4,6 +4,13 @@ use common::{MockGit, MockHosting};
 use gflow::flows::finish_hotfix::finish_hotfix;
 use gflow::hosting::LandedPr;
 use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
+use gflow::hooks::{HookEvent, TagEvent};
+use gflow::version::SemVer;
+
+fn hotfix_finished(major: u32, minor: u32, patch: u32) -> Option<TagEvent> {
+    let version = SemVer::new(major, minor, patch);
+    Some(TagEvent::new(HookEvent::HotfixFinish, &version, &version.hotfix_branch()))
+}
 
 /// Configure a MockGit for a "fresh start" hotfix finish: nothing is yet merged,
 /// no tags exist, source branch still exists locally and remotely.
@@ -20,7 +27,8 @@ fn finish_hotfix_full_sequence() {
     let git = fresh_hotfix_mock(1, 0, 1);
 
     let hosting = MockHosting::new();
-    finish_hotfix(&git, &hosting, &RepoConfig::default(), 1, 0, 1, "main", None, false).unwrap();
+    let event = finish_hotfix(&git, &hosting, &RepoConfig::default(), 1, 0, 1, "main", None, false).unwrap();
+    assert_eq!(event, hotfix_finished(1, 0, 1));
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:hotfix/1.0.1:main",
@@ -380,7 +388,8 @@ fn protected_hotfix_opens_main_pr_and_stops() {
     git.pushed_branches.insert("hotfix/1.1.1".to_string());
 
     let hosting = MockHosting::new();
-    finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+    let event = finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "tag_exists:v1.1.1",
@@ -426,7 +435,9 @@ fn protected_hotfix_tags_merge_commit_then_opens_develop_pr() {
     );
     git.parent_counts.insert("mc1".to_string(), 2);
 
-    finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+    let event = finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:mc1:origin/main",
@@ -625,7 +636,9 @@ fn protected_hotfix_completes_after_all_landed() {
     hosting.merged_prs_to.insert(("hotfix/1.1.1".to_string(), "release/1.2.0".to_string()), landed("hfsha", "mc3"));
     git.parent_counts.insert("mc3".to_string(), 2);
 
-    finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+    let event = finish_hotfix(&git, &hosting, &protected_cfg(false), 1, 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, hotfix_finished(1, 1, 1));
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:mc1:origin/main",
@@ -1048,7 +1061,7 @@ fn hotfix_cleanup_with_unlanded_tip_keeps_the_branch() {
         "an unlanded tip must never be deleted; calls: {:?}", git.calls());
 }
 
-fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
+fn assert_git_failure<T: std::fmt::Debug>(result: Result<T, String>, git: &MockGit, call: &str) {
     let error = result.expect_err(call);
     assert!(
         error.contains(&format!("injected git failure: {call}")),
@@ -1061,7 +1074,7 @@ fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
     );
 }
 
-fn assert_hosting_failure(result: Result<(), String>, hosting: &MockHosting, call: &str) {
+fn assert_hosting_failure<T: std::fmt::Debug>(result: Result<T, String>, hosting: &MockHosting, call: &str) {
     let error = result.expect_err(call);
     assert!(
         error.contains(&format!("injected hosting failure: {call}")),
@@ -1252,4 +1265,16 @@ fn protected_hotfix_stops_after_hosting_errors_before_opening_later_legs() {
         assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c.starts_with("delete_")));
         assert!(!hosting.calls().iter().any(|c| c.contains(":develop")));
     }
+}
+
+#[test]
+fn a_protected_hotfix_whose_cleanup_fails_reports_no_completed_hotfix() {
+    let (mut git, hosting) = landed_hotfix();
+    git.fail_call = Some(("delete_branch_local:hotfix/1.1.1".into(), 1));
+
+    assert_git_failure(
+        finish_hotfix(&git, &hosting, &protected_cfg_with_strategy(BumpStrategy::Rc), 1, 1, 1, "main", None, false),
+        &git,
+        "delete_branch_local:hotfix/1.1.1",
+    );
 }

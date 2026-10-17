@@ -69,26 +69,13 @@ pub trait WorktreeSetup {
     fn run_command(&self, worktree: &Path, main_root: &Path, command: &str) -> Result<(), String>;
 }
 
-fn shell_argv(command: &str, windows: bool) -> (&'static str, Vec<String>) {
-    if windows {
-        ("cmd", vec!["/C".to_string(), command.to_string()])
-    } else {
-        ("sh", vec!["-c".to_string(), command.to_string()])
-    }
-}
-
 /// Production `WorktreeSetup`: a zero-policy shell like `CommandEditor::open` —
 /// stdio is inherited so the command can print progress or ask questions.
 pub struct ShellSetup;
 
 impl WorktreeSetup for ShellSetup {
     fn run_command(&self, worktree: &Path, main_root: &Path, command: &str) -> Result<(), String> {
-        let (program, args) = shell_argv(command, cfg!(windows));
-        let status = std::process::Command::new(program)
-            .args(&args)
-            .current_dir(worktree)
-            .env("ROOT_WORKTREE_PATH", main_root)
-            .status()
+        let status = crate::shell::status(command, worktree, &[("ROOT_WORKTREE_PATH", main_root.as_os_str())])
             .map_err(|e| format!("failed to run '{command}': {e}"))?;
         if status.success() {
             Ok(())
@@ -392,12 +379,6 @@ mod tests {
     fn parse_of_an_empty_array_yields_no_commands() {
         assert_eq!(parse("[]").unwrap(), Vec::<String>::new());
         assert_eq!(parse(r#"{"other": 1}"#).unwrap(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn shell_argv_is_sh_c_on_unix_and_cmd_c_on_windows() {
-        assert_eq!(shell_argv("dart pub get", false), ("sh", vec!["-c".to_string(), "dart pub get".to_string()]));
-        assert_eq!(shell_argv("dart pub get", true), ("cmd", vec!["/C".to_string(), "dart pub get".to_string()]));
     }
 
     #[test]

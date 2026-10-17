@@ -93,6 +93,9 @@ pub trait Git {
     fn is_mid_merge(&self) -> Result<bool>;
     fn has_unmerged_paths(&self) -> Result<bool>;
     fn git_dir(&self) -> Result<PathBuf>;
+    /// Absolute path of the repository's shared `.git` directory. Unlike
+    /// `git_dir`, it outlives every linked worktree.
+    fn git_common_dir(&self) -> Result<PathBuf>;
 
     /// URL of the `origin` remote (`git remote get-url origin`). Errors when the
     /// remote does not exist; callers decide how to handle a missing remote.
@@ -469,6 +472,9 @@ impl Git for GitCli<'_> {
     fn git_dir(&self) -> Result<PathBuf> {
         let s = self.run(&["rev-parse", "--git-dir"])?;
         Ok(PathBuf::from(s))
+    }
+    fn git_common_dir(&self) -> Result<PathBuf> {
+        self.run(&["rev-parse", "--path-format=absolute", "--git-common-dir"]).map(PathBuf::from)
     }
 
     fn remote_url(&self) -> Result<String> {

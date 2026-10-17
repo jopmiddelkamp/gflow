@@ -5,6 +5,7 @@ pub mod cli;
 pub mod editor;
 pub mod flows;
 pub mod git;
+pub mod hooks;
 pub mod hosting;
 pub mod init;
 pub mod lifecycle;
@@ -12,6 +13,8 @@ pub mod mainline;
 pub mod menu;
 pub mod prompt;
 pub mod repo_config;
+pub mod sha256;
+pub(crate) mod shell;
 pub mod state;
 pub mod style;
 #[cfg(test)]

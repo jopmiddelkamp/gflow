@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - Unreleased
+
+### Added
+- Event hooks. A repo declares commands in `.gflow/config` with `hook-release-start`, `hook-release-bump`, `hook-release-finish` and `hook-hotfix-finish`, and gflow runs them after that event is done: tag pushed, finish completed. A key may repeat, so a backend and an app in one repo can both react to the same event; the commands run in file order, and a failing one does not stop the next. Each command runs through the shell in the repository root with `GFLOW_EVENT`, `GFLOW_TAG`, `GFLOW_TAG_KIND`, `GFLOW_BRANCH` and `GFLOW_REMOTE`. Under `bump-strategy=patch`, a release finish fires with the existing final tag.
+- Hook commands run at most once per event and tag. If gflow stops after the event but before or between its commands, the next gflow run in the repository runs the commands that did not run yet.
+- gflow asks `Run this hook? [y/N]` before it runs a hook command for the first time, and again when the command changes. Approvals are kept in `~/.gflow/hook-approvals`. Without a terminal, an unapproved command is skipped with one line of output.
+- `--no-hooks` on `gflow start release`, `gflow bump` and `gflow finish` skips the hook commands of that run and prints each one as a rerun command.
+- When a hook command fails, the release or hotfix stays done. gflow prints the exit code and the exact rerun command, and exits non-zero.
+
 ## [5.1.0] - 2026-10-13
 
 ### Changed

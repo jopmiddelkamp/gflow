@@ -7,7 +7,7 @@ use gflow::action::Action;
 #[should_panic(expected = "--abort is intercepted")]
 fn direct_dispatch_rejects_abort_before_normal_finish_resolution() {
     let _ = resolve_action(
-        Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false },
+        Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false },
         &BranchType::Release { major: 1, minor: 2, patch: 0 }, false, "main",
     );
 }
@@ -122,7 +122,7 @@ fn finish_resolves_each_branch_type_to_its_action() {
         ("other", None, None, BranchType::Other,
             Err("Not on a recognized gitflow branch.".to_string())),
     ] {
-        let cmd = Commands::Finish { breaking, base: base.map(str::to_string), abort: false, accept_merge_type: false };
+        let cmd = Commands::Finish { breaking, base: base.map(str::to_string), abort: false, accept_merge_type: false, no_hooks: false };
         assert_eq!(resolve_action(cmd, &branch_type, false, "main"), expected, "{case}");
     }
 }
@@ -135,7 +135,7 @@ fn finish_rejects_base_on_every_fixed_target_branch() {
         ("release_fix", BranchType::ReleaseFix { major: 1, minor: 2, patch: 0, name: "broken-login".to_string() }),
         ("hotfix_fix", BranchType::HotfixFix { major: 1, minor: 0, patch: 1, name: "urgent".to_string() }),
     ] {
-        let cmd = Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false };
+        let cmd = Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false, no_hooks: false };
         assert_eq!(
             resolve_action(cmd, &branch_type, false, "main"),
             Err("--base is only supported when finishing a work branch (feature/fix/chore/docs/refactor); this branch type has a fixed target.".to_string()),
@@ -148,7 +148,7 @@ fn finish_rejects_base_on_every_fixed_target_branch() {
 
 #[test]
 fn start_release_returns_start_release_action() {
-    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: false, no_worktree: false } };
+    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: false, no_worktree: false, no_hooks: false } };
     let branch_type = BranchType::Develop;
     let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
     assert!(matches!(action, Action::StartRelease { release_type: None, .. }));
@@ -156,7 +156,7 @@ fn start_release_returns_start_release_action() {
 
 #[test]
 fn start_release_major_flag() {
-    let cmd = Commands::Start { kind: StartKind::Release { major: true, minor: false, no_worktree: false } };
+    let cmd = Commands::Start { kind: StartKind::Release { major: true, minor: false, no_worktree: false, no_hooks: false } };
     let branch_type = BranchType::Develop;
     let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
     assert!(matches!(action, Action::StartRelease { release_type: Some(ReleaseType::Major), .. }));
@@ -164,7 +164,7 @@ fn start_release_major_flag() {
 
 #[test]
 fn start_release_minor_flag() {
-    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: false } };
+    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: false, no_hooks: false } };
     let branch_type = BranchType::Develop;
     let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
     assert!(matches!(action, Action::StartRelease { release_type: Some(ReleaseType::Minor), .. }));
@@ -174,7 +174,7 @@ fn start_release_minor_flag() {
 
 #[test]
 fn bump_on_release_branch() {
-    let cmd = Commands::Bump;
+    let cmd = Commands::Bump { no_hooks: false };
     let branch_type = BranchType::Release { major: 1, minor: 2, patch: 0 };
     let action = resolve_action(cmd, &branch_type, false, "main").unwrap();
     assert!(matches!(action, Action::BumpVersion));
@@ -182,7 +182,7 @@ fn bump_on_release_branch() {
 
 #[test]
 fn bump_on_wrong_branch() {
-    let cmd = Commands::Bump;
+    let cmd = Commands::Bump { no_hooks: false };
     let branch_type = BranchType::Develop;
     let result = resolve_action(cmd, &branch_type, false, "main");
     assert_eq!(result.unwrap_err(), "This command is only valid on a release branch.");
@@ -265,7 +265,7 @@ fn every_work_kind_in_the_table_has_a_working_start_subcommand() {
 #[test]
 fn the_flag_surface_parses_what_it_promises() {
     assert!(matches!(parse(&["finish"]).unwrap(),
-        Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false }));
+        Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false, no_hooks: false }));
     assert!(matches!(parse(&["finish", "--breaking"]).unwrap(),
         Commands::Finish { breaking: Some(true), .. }));
     assert!(matches!(parse(&["finish", "--breaking=false"]).unwrap(),
@@ -275,6 +275,15 @@ fn the_flag_surface_parses_what_it_promises() {
 
     assert!(matches!(parse(&["start", "release", "--minor", "--no-worktree"]).unwrap(),
         Commands::Start { kind: StartKind::Release { no_worktree: true, minor: true, .. } }));
+
+    // --no-hooks exists exactly where a hook event can fire.
+    assert!(matches!(parse(&["finish", "--no-hooks"]).unwrap(), Commands::Finish { no_hooks: true, .. }));
+    assert!(matches!(parse(&["bump", "--no-hooks"]).unwrap(), Commands::Bump { no_hooks: true }));
+    assert!(matches!(parse(&["bump"]).unwrap(), Commands::Bump { no_hooks: false }));
+    assert!(matches!(parse(&["start", "release", "--no-hooks"]).unwrap(),
+        Commands::Start { kind: StartKind::Release { no_hooks: true, .. } }));
+    assert!(parse(&["sync", "--no-hooks"]).is_err());
+    assert!(parse(&["start", "feature", "--name", "x", "--no-hooks"]).is_err());
 
     // `--local` is `global = true`, so it parses either side of the subcommand.
     assert!(matches!(parse(&["worktree", "--local", "enable"]).unwrap(),
@@ -302,7 +311,7 @@ fn incompatible_flag_combinations_are_rejected_by_clap_not_by_the_flow() {
 
 #[test]
 fn start_release_no_worktree_reaches_the_action() {
-    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: true } };
+    let cmd = Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: true, no_hooks: false } };
     let action = resolve_action(cmd, &BranchType::Develop, false, "main").unwrap();
     assert!(matches!(action, Action::StartRelease { release_type: Some(ReleaseType::Minor), no_worktree: true }), "{action:?}");
 }

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::hooks::{self, HookEvent};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     Free,
@@ -42,6 +44,8 @@ pub struct Settings {
     pub worktree: Option<bool>,
     pub editor: Option<String>,
     pub path: Option<String>,
+    /// `hook-*` lines in file order; only the committed file's count.
+    pub hooks: Option<Vec<(HookEvent, String)>>,
 }
 
 impl Settings {
@@ -55,6 +59,7 @@ impl Settings {
             worktree: over.worktree.or(self.worktree),
             editor: over.editor.or(self.editor),
             path: over.path.or(self.path),
+            hooks: over.hooks.or(self.hooks),
         }
     }
 
@@ -120,6 +125,14 @@ pub fn parse(contents: &str) -> Result<Settings, String> {
             },
             "editor" => config.editor = Some(value.to_string()),
             "path" => config.path = Some(value.to_string()),
+            key if key.starts_with("hook-") => {
+                let entry = hooks::parse_entry(key, value)?;
+                let list = config.hooks.get_or_insert_with(Vec::new);
+                if list.contains(&entry) {
+                    return Err(format!("Duplicate command for '{key}' in .gflow/config: {}", entry.1));
+                }
+                list.push(entry);
+            }
             _ => {}
         }
     }
@@ -219,31 +232,41 @@ fn read_layer(path: &std::path::PathBuf) -> Result<Option<String>, String> {
 /// global layer existed — a repo whose committed file omits a key keeps
 /// falling back to the built-in default rather than becoming an error.
 pub fn load_layers(home: Option<&Path>, repo_root: Option<&Path>) -> Result<Layers, String> {
-    let global_contents = match home.map(global_config_path) {
-        Some(path) => read_layer(&path)?,
+    let read_at = |path: std::path::PathBuf| -> Result<Option<(std::path::PathBuf, String)>, String> {
+        Ok(read_layer(&path)?.map(|contents| (path, contents)))
+    };
+    let global = match home {
+        Some(home) => read_at(global_config_path(home))?,
         None => None,
     };
-    let (repo_contents, local_contents) = match repo_root {
-        Some(root) => (
-            read_layer(&config_path(root))?,
-            read_layer(&local_config_path(root))?,
-        ),
+    let (repo, local) = match repo_root {
+        Some(root) => (read_at(config_path(root))?, read_at(local_config_path(root))?),
         None => (None, None),
     };
-    let initialised =
-        global_contents.is_some() || repo_contents.is_some() || local_contents.is_some();
+    let initialised = global.is_some() || repo.is_some() || local.is_some();
 
+    let mut warnings = Vec::new();
     let mut settings = Settings::default();
-    for contents in [&global_contents, &repo_contents].into_iter().flatten() {
+    if let Some((path, contents)) = &global {
+        settings = settings.merge(without_hooks(parse(contents)?, path, &mut warnings));
+    }
+    if let Some((_, contents)) = &repo {
         settings = settings.merge(parse(contents)?);
     }
-    let mut warnings = Vec::new();
-    if let Some(contents) = &local_contents {
-        let (local_settings, local_warnings) = parse_local(contents)?;
-        settings = settings.merge(local_settings);
-        warnings = local_warnings;
+    if let Some((path, contents)) = &local {
+        let (local_settings, team_warnings) = parse_local(contents)?;
+        warnings.extend(team_warnings);
+        settings = settings.merge(without_hooks(local_settings, path, &mut warnings));
     }
     Ok(Layers { settings, warnings, initialised })
+}
+
+/// Hooks run commands, so only the reviewed, committed file may declare them.
+fn without_hooks(mut layer: Settings, path: &Path, warnings: &mut Vec<String>) -> Settings {
+    if layer.hooks.take().is_some() {
+        warnings.push(format!("Hook keys are read only from .gflow/config; the ones in {} are ignored.", path.display()));
+    }
+    layer
 }
 
 pub fn global_config_path(home: &Path) -> std::path::PathBuf {
@@ -684,6 +707,41 @@ keep-release-branches=true
     fn bump_strategy_patch_parses() {
         let config = parse("bump-strategy=patch\n").unwrap().resolve();
         assert_eq!(config.bump_strategy, BumpStrategy::Patch);
+    }
+
+    #[test]
+    fn hook_keys_are_kept_in_file_order() {
+        use crate::hooks::HookEvent::{ReleaseBump, ReleaseStart};
+        let settings = parse("hook-release-bump=web\nmode=free\nhook-release-start=start\nhook-release-bump = app \n").unwrap();
+        assert_eq!(settings.hooks, Some(vec![
+            (ReleaseBump, "web".to_string()),
+            (ReleaseStart, "start".to_string()),
+            (ReleaseBump, "app".to_string()),
+        ]));
+        assert_eq!(parse("mode=free\n").unwrap().hooks, None);
+    }
+
+    #[test]
+    fn a_misspelled_hook_key_is_an_error_while_other_unknown_keys_are_ignored() {
+        let err = parse("hook-relase-bump=deploy\n").unwrap_err();
+        assert!(err.starts_with("Unknown key 'hook-relase-bump' in .gflow/config. Valid hook keys: "), "got: {err}");
+        assert!(parse("some-future-key=1\n").is_ok());
+    }
+
+    #[test]
+    fn the_same_command_twice_for_one_event_is_an_error() {
+        let err = parse("hook-release-bump=deploy\nhook-release-bump=deploy\n").unwrap_err();
+        assert_eq!(err, "Duplicate command for 'hook-release-bump' in .gflow/config: deploy");
+        assert!(parse("hook-release-bump=deploy\nhook-hotfix-finish=deploy\n").is_ok());
+    }
+
+    #[test]
+    fn hooks_merge_like_every_other_key() {
+        use crate::hooks::HookEvent::ReleaseBump;
+        let lower = Settings { hooks: Some(vec![(ReleaseBump, "a".to_string())]), ..Settings::default() };
+        assert_eq!(lower.clone().merge(Settings::default()).hooks, lower.hooks);
+        let upper = Settings { hooks: Some(vec![(ReleaseBump, "b".to_string())]), ..Settings::default() };
+        assert_eq!(lower.merge(upper.clone()).hooks, upper.hooks);
     }
 
     #[test]

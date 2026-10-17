@@ -635,7 +635,7 @@ repository's own `.gitignore` is never touched.
 
 ### `.gflow/config`
 
-A committed file, one `key=value` pair per line, `#` comments allowed, unknown keys ignored:
+A committed file, one `key=value` pair per line, `#` comments allowed, unknown keys ignored (except a misspelled `hook-*` key, which is an error):
 
 ```
 mode=protected
@@ -647,6 +647,7 @@ keep-release-branches=true
 | `mode` | `free` \| `protected` | `free` | `free` is today's behavior: `finish`/`bump`/`sync` merge and push directly. `protected` lands every merge into `main`, `develop`, or an already-pushed `release/*` branch via a PR instead. |
 | `keep-release-branches` | `true` \| `false` | `false` | When `true`, `finish` and `bump` stop deleting the `release/*`/`hotfix/*` branch when they're done with it. Work branches (`feature/*`, `fix/*`, ...) are never affected. |
 | `bump-strategy` | `rc` \| `patch` | `rc` | How `bump` versions staged builds. `rc` is today's behavior: pre-release tags (`v2.6.0-rc.1`, `-rc.2`, …) with one clean tag at finish. `patch` increments the real patch version at every bump (`v2.6.0` → `v2.6.1` → …) — see [Bump strategy](#bump-strategy-rc-vs-patch). |
+| `hook-release-start`, `hook-release-bump`, `hook-release-finish`, `hook-hotfix-finish` | a shell command | none | A command gflow runs after that event is done. A key may repeat. See [Hooks](#hooks). |
 
 It also accepts `worktree`, `editor`, and `path` — the same keys `gflow worktree --repo` writes.
 This file is committed, so a setting made here applies to everyone who clones the repository.
@@ -801,6 +802,96 @@ Because `develop` and an open hotfix or release branch can carry different versi
 ```
 ⚠ Version script not run: hotfix/1.2.1 was created without checkout, so gflow cannot commit version files there.
   Recover manually: git switch hotfix/1.2.1, run set-version.sh 1.2.1, commit, and push.
+```
+
+## Hooks
+
+A repo can run its own commands after a release or hotfix event, for example a deploy. Declare them in the committed `.gflow/config`, one key per event:
+
+```
+hook-release-start=<command>
+hook-release-bump=<command>
+hook-release-finish=<command>
+hook-hotfix-finish=<command>
+```
+
+- **Only the events you need.** An event without a key runs nothing.
+- **A key may repeat.** Its commands run in file order, each once. When one fails, the next still runs. This is how a backend and an app in one repo both react to the same event.
+- **Typos are errors.** An unknown `hook-*` key (`hook-relase-bump`) stops gflow and lists the valid keys. The same command twice for one event is an error too.
+- **Committed file only.** Hook keys in `~/.gflow/config` or `.gflow/config.local` are ignored, with a warning.
+
+### Events
+
+An event fires after it is completely done: merged, tagged, pushed, and cleaned up.
+
+| Event | Fires when | `GFLOW_TAG` | `GFLOW_TAG_KIND` |
+|---|---|---|---|
+| `release-start` | `gflow start release` created the branch and pushed its first tag. Reusing an open release fires nothing. | `v1.2.0-rc.1` (`v1.2.0` under `patch`) | `rc` (`final`) |
+| `release-bump` | `gflow bump` pushed the new tag. A protected-mode bump fires on the run that cuts the deferred tag. | `v1.2.0-rc.2` (`v1.2.1` under `patch`) | `rc` (`final`) |
+| `release-finish` | `gflow finish` completed the release, under both bump strategies. Under `patch` it pushes no new tag: `GFLOW_TAG` is the existing final tag. | `v1.2.0` (`v1.2.1` under `patch`) | `final` |
+| `hotfix-finish` | `gflow finish` completed the hotfix. | `v1.2.1` | `final` |
+
+A work-branch finish, a `sync`, and a protected-mode finish that still waits for a landing PR fire nothing. A failed tag push fires nothing.
+
+Each command runs through the shell (`sh -c`, or `cmd /C` on Windows) in the repository's main working tree, with stdin, stdout, and stderr connected to your terminal, and with:
+
+| Variable | Value |
+|---|---|
+| `GFLOW_EVENT` | `release-start`, `release-bump`, `release-finish`, or `hotfix-finish` |
+| `GFLOW_TAG` | the tag of the event |
+| `GFLOW_TAG_KIND` | `rc` or `final` |
+| `GFLOW_BRANCH` | the event's branch, for example `release/1.2.0` |
+| `GFLOW_REMOTE` | the remote the tag is on (`origin`) |
+
+### Trust
+
+A pull request can change `.gflow/config`, so gflow does not run a hook command it has not seen before. Before the first run of a command, and again when its text changes, gflow shows it and asks `Run this hook? [y/N]`. A yes is stored as a SHA-256 of the command, for this repository, in `~/.gflow/hook-approvals`, never in the repository. Without a terminal (CI), an unapproved command does not run: gflow prints one line and goes on.
+
+### Delivery
+
+Each command runs **at most once per event and tag** on a clone. gflow records each event in `.git/gflow-hooks/` before it runs anything, and each command just before that command starts. If gflow stops (a crash, or a merge conflict in a finish), the next gflow run in the repository runs the commands that did not run yet, exactly once. An interrupted finish fires nothing until you resume it and it completes.
+
+`--no-hooks` on `gflow start release`, `gflow bump`, and `gflow finish` skips the event's commands for good and prints each one as a rerun command.
+
+### When a command fails
+
+The release or hotfix stays done: nothing is rolled back, and a resumed finish does not see the hook as an unfinished step. gflow prints one line per failed command, with the exit code and the exact command to rerun it by hand, and exits non-zero at the end:
+
+```
+✖ Hook failed (exit 1). Rerun: cd '/repos/facedown' && GFLOW_EVENT='release-bump' GFLOW_TAG='v1.2.0-rc.2' GFLOW_TAG_KIND='rc' GFLOW_BRANCH='release/1.2.0' GFLOW_REMOTE='origin' sh -c './deploy/web.sh staging'
+```
+
+### Examples
+
+A web backend deploys every staged tag to staging and the final tag to production:
+
+```
+hook-release-start=./deploy/web.sh staging "$GFLOW_TAG"
+hook-release-bump=./deploy/web.sh staging "$GFLOW_TAG"
+hook-release-finish=./deploy/web.sh production "$GFLOW_TAG"
+hook-hotfix-finish=./deploy/web.sh production "$GFLOW_TAG"
+```
+
+A mobile app ships one build: it builds and uploads to the stores' test track on start and bump, and promotes that same tested build at release finish. A hotfix has no tested build to promote, so it builds again:
+
+```
+hook-release-start=./app/build-and-upload.sh test-track "$GFLOW_TAG"
+hook-release-bump=./app/build-and-upload.sh test-track "$GFLOW_TAG"
+hook-release-finish=./app/promote.sh production "$GFLOW_TAG"
+hook-hotfix-finish=./app/build-and-upload.sh production "$GFLOW_TAG"
+```
+
+Both in one repository (a backend and an app): repeat the keys. Each event runs the web line first, then the app line:
+
+```
+hook-release-start=./deploy/web.sh staging "$GFLOW_TAG"
+hook-release-start=./app/build-and-upload.sh test-track "$GFLOW_TAG"
+hook-release-bump=./deploy/web.sh staging "$GFLOW_TAG"
+hook-release-bump=./app/build-and-upload.sh test-track "$GFLOW_TAG"
+hook-release-finish=./deploy/web.sh production "$GFLOW_TAG"
+hook-release-finish=./app/promote.sh production "$GFLOW_TAG"
+hook-hotfix-finish=./deploy/web.sh production "$GFLOW_TAG"
+hook-hotfix-finish=./app/build-and-upload.sh production "$GFLOW_TAG"
 ```
 
 ## Version Resolution

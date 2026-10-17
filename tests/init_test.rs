@@ -69,7 +69,7 @@ fn run_refuses_when_already_initialised() {
     let root = root();
     repo_config::write(&root, &RepoConfig::default()).unwrap();
     let err = run(&MockPrompter::new(), &root).unwrap_err();
-    assert_eq!(err, "Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy).");
+    assert_eq!(err, "Already initialised: edit .gflow/config directly (mode, keep-release-branches, bump-strategy, hook-release-start, hook-release-bump, hook-release-finish, hook-hotfix-finish).");
 }
 
 #[test]

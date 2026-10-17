@@ -7,6 +7,11 @@ use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
 use gflow::version::SemVer;
 use gflow::worktree::{WorktreeConfig, WorktreeContext, WorktreeEnv};
 use common::MockWorktreeSetup;
+use gflow::hooks::{HookEvent, TagEvent};
+
+fn started(tag: &str) -> Option<TagEvent> {
+    Some(TagEvent::new(HookEvent::ReleaseStart, &SemVer::parse(tag).unwrap(), "release/1.1.0"))
+}
 
 fn patch_cfg() -> RepoConfig {
     RepoConfig { bump_strategy: BumpStrategy::Patch, ..RepoConfig::default() }
@@ -93,7 +98,7 @@ fn every_start_cuts_from_origin_when_the_local_parent_is_stale() {
             Box::new(|git| start_hotfix_fix(git, &hosting, &cfg, "crash", false, None, "main", None)),
             "create_branch:hotfix/1.0.1:origin/main"),
         ("new release from develop", "feature/login", "develop",
-            Box::new(|git| start_release(git, &MockPrompter::new(), &hosting, None, &cfg, Some(ReleaseType::Minor), "main", None)),
+            Box::new(|git| start_release(git, &MockPrompter::new(), &hosting, None, &cfg, Some(ReleaseType::Minor), "main", None).map(|_| ())),
             "create_branch:release/1.1.0:origin/develop"),
     ];
     for (case, current, stale_parent, start, expected) in cases {
@@ -158,7 +163,9 @@ fn start_release_creates_new_when_no_release_exists_with_tags() {
     git.branches_matching = vec![]; // no existing release branches
     git.tags = vec!["v1.0.0".to_string()];
 
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
+    let event = start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
+
+    assert_eq!(event, started("v1.1.0-rc.1"));
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
@@ -335,7 +342,9 @@ fn start_release_patch_mode_cuts_a_clean_first_tag() {
     git.branches_matching = vec![];
     git.tags = vec!["v1.0.0".to_string()];
 
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &patch_cfg(), Some(ReleaseType::Minor), "main", None).unwrap();
+    let event = start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &patch_cfg(), Some(ReleaseType::Minor), "main", None).unwrap();
+
+    assert_eq!(event, started("v1.1.0"));
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
@@ -1469,7 +1478,9 @@ fn start_release_worktree_mode_creates_here_then_opens_a_worktree() {
     let env = WorktreeEnv { config: &config, editor: &editor, setup: &setup, commands: None };
     let ctx = WorktreeContext { env: &env, prompter: &prompter };
 
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", Some(ctx)).unwrap();
+    let event = start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", Some(ctx)).unwrap();
+
+    assert_eq!(event, started("v1.1.0-rc.1"));
 
     let expected = std::env::temp_dir().join("beans-gitflow-release-1.1.0").display().to_string();
     assert_eq!(git.calls(), vec![
@@ -1500,7 +1511,9 @@ fn start_release_worktree_mode_opens_a_worktree_for_an_existing_release() {
     let env = WorktreeEnv { config: &config, editor: &editor, setup: &setup, commands: None };
     let ctx = WorktreeContext { env: &env, prompter: &prompter };
 
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), None, "main", Some(ctx)).unwrap();
+    let event = start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), None, "main", Some(ctx)).unwrap();
+
+    assert_eq!(event, None);
 
     let calls = git.calls();
     assert!(!calls.contains(&"checkout:release/1.1.0".to_string()), "must not switch the current tree; calls: {calls:?}");
@@ -1651,7 +1664,9 @@ fn start_release_reuses_the_newest_open_release_branch() {
     let mut git = MockGit::new();
     git.branches_matching = vec!["release/1.0.0".to_string(), "release/1.3.0".to_string()];
 
-    start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
+    let event = start_release(&git, &MockPrompter::new(), &MockHosting::new(), None, &RepoConfig::default(), Some(ReleaseType::Minor), "main", None).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "list_branches_matching:release/*",
@@ -1689,7 +1704,7 @@ fn the_first_patch_hotfix_starts_at_zero_zero_one() {
         .contains(&"create_branch:hotfix-fix/0.0.1/repair:hotfix/0.0.1".into()));
 }
 
-fn assert_stopped(git: &MockGit, result: Result<(), String>, call: &str) {
+fn assert_stopped<T: std::fmt::Debug + PartialEq>(git: &MockGit, result: Result<T, String>, call: &str) {
     assert_eq!(result, Err(format!("injected git failure: {call}")));
     assert_eq!(git.calls().last().map(String::as_str), Some(call));
 }
@@ -2163,7 +2178,8 @@ fn start_worktree_errors_stop_before_opening_the_editor_or_creating_a_fix() {
                 Some(ReleaseType::Minor),
                 "main",
                 ctx,
-            ),
+            )
+            .map(|_| ()),
         };
         assert_stopped(&git, result, call);
         assert!(editor.calls().is_empty());

@@ -372,3 +372,23 @@ fn migration_keeps_the_new_copy_when_removing_an_old_git_key_fails() {
         "worktree=true\n"
     );
 }
+
+#[test]
+fn hooks_are_read_only_from_the_committed_file() {
+    use gflow::hooks::HookEvent::ReleaseBump;
+    let home = tmp_dir("gflow-hooks-layers-home");
+    let root = tmp_dir("gflow-hooks-layers-repo");
+    fs::create_dir_all(home.join(".gflow")).unwrap();
+    fs::create_dir_all(root.join(".gflow")).unwrap();
+    fs::write(home.join(".gflow/config"), "hook-release-finish=global-deploy\n").unwrap();
+    fs::write(root.join(".gflow/config"), "hook-release-bump=team-deploy\n").unwrap();
+    fs::write(root.join(".gflow/config.local"), "hook-release-bump=my-deploy\n").unwrap();
+
+    let layers = repo_config::load_layers(Some(&home), Some(&root)).unwrap();
+
+    assert_eq!(layers.settings.hooks, Some(vec![(ReleaseBump, "team-deploy".to_string())]));
+    assert_eq!(layers.warnings, vec![
+        format!("Hook keys are read only from .gflow/config; the ones in {} are ignored.", home.join(".gflow/config").display()),
+        format!("Hook keys are read only from .gflow/config; the ones in {} are ignored.", root.join(".gflow/config.local").display()),
+    ]);
+}

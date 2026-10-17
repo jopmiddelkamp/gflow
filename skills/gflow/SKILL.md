@@ -148,6 +148,10 @@ Config is three layers, later overriding earlier per key: `~/.gflow/config` (you
 
 `--no-checkout` hotfix creation skips the script (HEAD isn't on the new branch) and warns with the manual recovery steps.
 
+### Hooks
+
+`.gflow/config` (committed file only; other layers are ignored with a warning) may set `hook-release-start=`, `hook-release-bump=`, `hook-release-finish=`, `hook-hotfix-finish=` to a shell command. A key may repeat: commands run in file order, each once; a failing one does not stop the next. An unknown `hook-*` key is an error. Each event fires after it is fully done (tag pushed, finish completed; under `patch` a release finish fires with the existing final tag). Never for work-branch finishes, `sync`, or a protected finish still waiting on a PR. Commands run via `sh -c` in the main tree root with `GFLOW_EVENT`, `GFLOW_TAG`, `GFLOW_TAG_KIND` (`rc`|`final`), `GFLOW_BRANCH`, `GFLOW_REMOTE`, stdio inherited. First run of a command (or changed text) asks `Run this hook? [y/N]`; approvals live in `~/.gflow/hook-approvals`. **No terminal = unapproved commands are skipped**, so an agent must not expect a hook to run until a human approved it once. At most once per command, event, and tag (ledger in `.git/gflow-hooks/`); the next gflow run fires anything a crash left pending. A failing hook leaves the flow done, prints a rerun line, and exits non-zero — do not re-run `finish`/`bump` for it; run the printed line. `--no-hooks` on `start release`, `bump`, `finish` skips them for good.
+
 ### Tag Strategy
 
 Selected per repo via `bump-strategy` in `.gflow/config`. gflow writes `v`-prefixed tags; a plain `X.Y.Z` tag is read as the same version (latest lookup, shipped detection).

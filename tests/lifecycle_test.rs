@@ -23,7 +23,7 @@ fn wt_config() -> WorktreeConfig {
 }
 
 fn finish_cmd() -> Option<Commands> {
-    Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false })
+    Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false, no_hooks: false })
 }
 
 /// A MockGit standing on release/2.5.0 with one RC tag and a fake `.git` dir,
@@ -37,6 +37,11 @@ fn release_git() -> MockGit {
     git
 }
 
+/// A repo without hook keys: the shell is never reached.
+fn no_hooks() -> gflow::hooks::HookEnv<'static> {
+    gflow::hooks::HookEnv { commands: Vec::new(), shell: &gflow::hooks::ShellHook, interactive: false, approvals_file: None }
+}
+
 fn state_path(git_dir: &PathBuf) -> PathBuf {
     FinishState::path(git_dir, FinishKind::Release, 2, 5, 0)
 }
@@ -45,7 +50,7 @@ fn run_lifecycle(git: &MockGit, command: Option<Commands>) -> Result<(), String>
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new();
     let editor = MockEditor::new();
-    run(git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, command)
+    run(git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, command)
 }
 
 // --- The --accept-merge-type flag reaches the flows ---
@@ -72,7 +77,7 @@ fn merged_feature_hosting() -> MockHosting {
 fn run_with(git: &MockGit, hosting: &MockHosting, command: Option<Commands>) -> Result<(), String> {
     let prompter = MockPrompter::new();
     let editor = MockEditor::new();
-    run(git, hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, command)
+    run(git, hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, command)
 }
 
 #[test]
@@ -80,7 +85,7 @@ fn finish_without_the_flag_refuses_a_wrongly_completed_pr() {
     let git = wrongly_squash_checked_feature_git("gflow-accept-mt-refuse");
     let hosting = merged_feature_hosting();
 
-    let err = run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false })).unwrap_err();
+    let err = run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false, no_hooks: false })).unwrap_err();
 
     assert!(err.contains("--accept-merge-type"), "got: {err}");
 }
@@ -90,7 +95,7 @@ fn finish_with_the_flag_accepts_a_wrongly_completed_pr() {
     let git = wrongly_squash_checked_feature_git("gflow-accept-mt-accept");
     let hosting = merged_feature_hosting();
 
-    run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: true })).unwrap();
+    run_with(&git, &hosting, Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: true, no_hooks: false })).unwrap();
 
     assert!(git.calls().contains(&"delete_branch_local:feature/x".to_string()),
         "the accepted finish must complete; got: {:?}", git.calls());
@@ -112,11 +117,11 @@ fn sync_forwards_the_accept_flag_to_the_landing_check() {
     let editor = MockEditor::new();
     let cfg = RepoConfig { mode: Mode::Protected, ..RepoConfig::default() };
 
-    let refused = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &cfg, None,
+    let refused = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &cfg, None,
         Some(Commands::Sync { accept_merge_type: false }));
     assert!(refused.unwrap_err().contains("--accept-merge-type"));
 
-    run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &cfg, None,
+    run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &cfg, None,
         Some(Commands::Sync { accept_merge_type: true })).unwrap();
 }
 
@@ -183,7 +188,7 @@ fn protected_finish_writes_no_state_file() {
     let prompter = MockPrompter::new();
     let editor = MockEditor::new();
 
-    let result = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &protected_cfg(), None, finish_cmd());
+    let result = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &protected_cfg(), None, finish_cmd());
 
     assert!(result.is_ok(), "a pending landing is not a failure: {result:?}");
     assert!(!state_path(&git.git_dir).exists(),
@@ -205,7 +210,7 @@ fn protected_finish_rejects_dirty_tree() {
     let prompter = MockPrompter::new();
     let editor = MockEditor::new();
 
-    let err = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &protected_cfg(), None, finish_cmd()).unwrap_err();
+    let err = run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &protected_cfg(), None, finish_cmd()).unwrap_err();
 
     assert_eq!(err, "Working tree is not clean. Commit your changes before finishing.");
     let calls = git.calls();
@@ -272,7 +277,7 @@ fn run_protected(git: &MockGit, command: Option<Commands>) -> Result<(), String>
     let hosting = MockHosting::new();
     let prompter = MockPrompter::new();
     let editor = MockEditor::new();
-    run(git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &protected_cfg(), None, command)
+    run(git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &protected_cfg(), None, command)
 }
 
 #[test]
@@ -333,7 +338,7 @@ fn unmerged_paths_on_a_landing_branch_block_without_a_switch() {
 fn abort_on_a_landing_branch_does_not_switch() {
     let git = resolved_landing_branch_git("main");
 
-    let result = run_protected(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false }));
+    let result = run_protected(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false }));
 
     assert!(result.is_ok(), "abort is a no-op without state: {result:?}");
     assert!(!git.calls().contains(&"checkout:release/2.5.0".to_string()),
@@ -344,7 +349,7 @@ fn abort_on_a_landing_branch_does_not_switch() {
 fn finish_with_explicit_base_on_a_landing_branch_does_not_switch() {
     let git = resolved_landing_branch_git("main");
 
-    run_protected(&git, Some(Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false }))
+    run_protected(&git, Some(Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false, no_hooks: false }))
         .expect_err("a landing branch is not a work branch, so --base must be rejected");
     assert!(!git.calls().contains(&"checkout:release/2.5.0".to_string()),
         "an explicit --base is not a landing-branch resume; calls: {:?}", git.calls());
@@ -432,7 +437,7 @@ fn abort_clears_state_without_touching_the_repo() {
         started_at: "1".to_string(), stash_message: Some("gflow-finish:release/2.5.0:1".to_string()),
     }.save(&git.git_dir).unwrap();
 
-    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false })).unwrap();
+    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false })).unwrap();
 
     assert!(!state_path(&git.git_dir).exists(), "abort must discard the state file");
     let calls = git.calls();
@@ -459,7 +464,7 @@ fn release_state() -> FinishState {
 fn resume_state_resumes_finish_without_base() {
     let branch_type = BranchType::Release { major: 2, minor: 5, patch: 0 };
     let state = release_state();
-    let cmd = Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false });
+    let cmd = Some(Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false, no_hooks: false });
 
     let action = resolve_action_with_state(cmd, &MockPrompter::new(), &branch_type, "release/2.5.0", Some(&state), false, "main").unwrap();
 
@@ -476,7 +481,7 @@ fn abort_is_accepted_from_any_branch_including_unrecognized_ones() {
         BranchType::Develop,
         BranchType::Release { major: 2, minor: 5, patch: 0 },
     ] {
-        let cmd = Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false });
+        let cmd = Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false });
 
         let action = resolve_action_with_state(cmd, &MockPrompter::new(), &branch_type, "whatever", None, false, "main").unwrap();
 
@@ -514,7 +519,7 @@ fn enabled_wt_config() -> WorktreeConfig {
 }
 
 fn run_with_worktree(git: &MockGit, command: Option<Commands>) -> Result<(), String> {
-    run(git, &MockHosting::new(), &MockPrompter::new(), &WorktreeEnv { config: &enabled_wt_config(), editor: &MockEditor::new(), setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, command)
+    run(git, &MockHosting::new(), &MockPrompter::new(), &WorktreeEnv { config: &enabled_wt_config(), editor: &MockEditor::new(), setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, command)
 }
 
 #[test]
@@ -556,7 +561,7 @@ fn start_release_dispatches_to_the_release_flow() {
     git.tags = vec!["v2.4.0".to_string()];
 
     run_lifecycle(&git, Some(Commands::Start {
-        kind: StartKind::Release { major: true, minor: false, no_worktree: false },
+        kind: StartKind::Release { major: true, minor: false, no_worktree: false, no_hooks: false },
     })).unwrap();
 
     let calls = git.calls();
@@ -614,7 +619,7 @@ fn finish_fix_branches_dispatch_and_target_their_parent_branch() {
         let prompter = MockPrompter::new();
         let editor = MockEditor::new();
 
-        run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, finish_cmd())
+        run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, finish_cmd())
             .unwrap_or_else(|error| panic!("{current}: {error}"));
 
         assert!(hosting.calls().iter().any(|c| c.starts_with(&format!("create_or_get_pr:{current}:{parent}:"))),
@@ -626,7 +631,7 @@ fn finish_fix_branches_dispatch_and_target_their_parent_branch() {
 fn bump_dispatches_and_cuts_the_next_rc() {
     let git = release_git(); // already carries v2.5.0-rc.1
 
-    run_lifecycle(&git, Some(Commands::Bump)).unwrap();
+    run_lifecycle(&git, Some(Commands::Bump { no_hooks: false })).unwrap();
 
     let calls = git.calls();
     assert!(calls.contains(&"push_tag:v2.5.0-rc.2".to_string()),
@@ -707,7 +712,7 @@ fn abort_without_state_succeeds_and_does_nothing() {
     // decisions.md: "--abort ... succeeds on a clean repo — safe to run speculatively".
     let git = release_git();
 
-    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false })).unwrap();
+    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false })).unwrap();
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "fetch"), "abort must not fetch; calls: {calls:?}");
@@ -813,7 +818,7 @@ fn explicit_base_rejected_even_when_resume_state_exists() {
     // resume early-return used to skip — silently swallowing an invalid --base.
     let branch_type = BranchType::Release { major: 2, minor: 5, patch: 0 };
     let state = release_state();
-    let cmd = Some(Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false });
+    let cmd = Some(Commands::Finish { breaking: None, base: Some("develop".to_string()), abort: false, accept_merge_type: false, no_hooks: false });
 
     let err = resolve_action_with_state(cmd, &MockPrompter::new(), &branch_type, "release/2.5.0", Some(&state), false, "main").unwrap_err();
 
@@ -831,7 +836,7 @@ fn finish_work_branch_dispatches_with_its_resolved_pr_template() {
     let prompter = MockPrompter::scripted(&[0]); // "no" to breaking changes
     let editor = MockEditor::new();
 
-    run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, finish_cmd()).unwrap();
+    run(&git, &hosting, &prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, finish_cmd()).unwrap();
 
     assert!(hosting.calls().iter().any(|c| c.starts_with("create_or_get_pr:feature/login:develop:feat: login")),
         "calls: {:?}", hosting.calls());
@@ -883,7 +888,7 @@ fn no_subcommand_falls_through_to_the_interactive_menu() {
 
 fn run_menu(git: &MockGit, prompter: &MockPrompter) -> Result<(), String> {
     let editor = MockEditor::new();
-    run(git, &MockHosting::new(), prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &RepoConfig::default(), None, None)
+    run(git, &MockHosting::new(), prompter, &WorktreeEnv { config: &wt_config(), editor: &editor, setup: &MockWorktreeSetup::new(), commands: None }, &no_hooks(), &RepoConfig::default(), None, None)
 }
 
 #[test]
@@ -920,7 +925,7 @@ fn a_subcommand_fetches_in_the_background_too() {
     git.tags = vec!["v2.4.0".to_string()];
 
     run_lifecycle(&git, Some(Commands::Start {
-        kind: StartKind::Release { major: false, minor: true, no_worktree: true },
+        kind: StartKind::Release { major: false, minor: true, no_worktree: true, no_hooks: false },
     })).unwrap();
 
     let calls = git.calls();
@@ -933,7 +938,7 @@ fn a_subcommand_fetches_in_the_background_too() {
 fn an_abort_never_fetches() {
     let git = release_git();
 
-    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false })).unwrap();
+    run_lifecycle(&git, Some(Commands::Finish { breaking: None, base: None, abort: true, accept_merge_type: false, no_hooks: false })).unwrap();
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "start_fetch" || c == "fetch"), "calls: {calls:?}");
@@ -957,8 +962,8 @@ fn a_work_finish_asks_for_its_prs_while_the_fetch_runs() {
 
 #[test]
 fn only_work_finishes_prefetch_their_prs() {
-    let feature_finish = Some(Commands::Finish { breaking: Some(false), base: None, abort: false, accept_merge_type: false });
-    let start_release = Some(Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: true } });
+    let feature_finish = Some(Commands::Finish { breaking: Some(false), base: None, abort: false, accept_merge_type: false, no_hooks: false });
+    let start_release = Some(Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: true, no_hooks: false } });
     for (branch, command, prefetched) in [
         ("feature/x", feature_finish, true),
         ("release-fix/2.5.0/login", finish_cmd(), true),
@@ -986,7 +991,7 @@ fn a_worktree_mode_start_release_still_stashes_a_dirty_tree() {
     git.working_tree_clean = false;
 
     run_with_worktree(&git, Some(Commands::Start {
-        kind: StartKind::Release { major: false, minor: true, no_worktree: false },
+        kind: StartKind::Release { major: false, minor: true, no_worktree: false, no_hooks: false },
     })).unwrap();
 
     let calls = git.calls();
@@ -1002,7 +1007,7 @@ fn a_worktree_mode_start_release_with_no_worktree_stays_in_the_current_tree() {
     git.tags = vec!["v2.4.0".to_string()];
 
     run_with_worktree(&git, Some(Commands::Start {
-        kind: StartKind::Release { major: false, minor: true, no_worktree: true },
+        kind: StartKind::Release { major: false, minor: true, no_worktree: true, no_hooks: false },
     })).unwrap();
 
     let calls = git.calls();
@@ -1018,6 +1023,7 @@ fn finish() -> Commands {
         base: None,
         abort: false,
         accept_merge_type: false,
+        no_hooks: false,
     }
 }
 
@@ -1049,6 +1055,7 @@ fn run_unattended(
             setup: &MockWorktreeSetup::new(),
             commands: None,
         },
+        &no_hooks(),
         cfg,
         None,
         Some(command),
@@ -1185,6 +1192,7 @@ fn failed_start_flows_never_publish_an_uncreated_branch() {
                 major: false,
                 minor: true,
                 no_worktree: false,
+                no_hooks: false,
             },
             "list_branches_matching:release/*",
         ),
@@ -1294,7 +1302,7 @@ fn failed_bump_tag_lookup_leaves_the_release_untouched() {
     let hosting = MockHosting::new();
 
     assert_eq!(
-        run_unattended(&git, &hosting, Commands::Bump, &RepoConfig::default()).unwrap_err(),
+        run_unattended(&git, &hosting, Commands::Bump { no_hooks: false }, &RepoConfig::default()).unwrap_err(),
         "injected git failure: tags_on_branch:release/2.5.0"
     );
     assert_eq!(git.calls().last().unwrap(), "tags_on_branch:release/2.5.0");
@@ -1328,6 +1336,7 @@ fn failed_state_removal_preserves_resume_data_on_success_or_abort() {
                 base: None,
                 abort,
                 accept_merge_type: false,
+                no_hooks: false,
             },
             &RepoConfig::default(),
         );
@@ -1366,6 +1375,7 @@ fn abort_without_a_saved_stash_only_clears_its_own_resume_state() {
             base: None,
             abort: true,
             accept_merge_type: false,
+            no_hooks: false,
         },
         &repo_config::RepoConfig::default(),
     )
@@ -1384,4 +1394,258 @@ fn abort_without_a_saved_stash_only_clears_its_own_resume_state() {
         .calls()
         .iter()
         .any(|call| call.starts_with("stash_") || call == "fetch"));
+}
+
+// --- Event hooks ---
+
+use common::{tmp_dir, MockHookShell, TempDir};
+use gflow::hooks::{self, HookEnv, HookEvent, Hooks, TagEvent};
+use gflow::repo_config::BumpStrategy;
+use gflow::version::SemVer;
+
+/// (command, GFLOW_* variables) of each hook run, in order.
+type Fired = Vec<(String, Vec<(String, String)>)>;
+
+fn on(event: HookEvent) -> String {
+    format!("on-{}", event.name())
+}
+
+/// One approved command per event, so a test sees exactly which event fired.
+struct HookWorld {
+    home: TempDir,
+    shell: MockHookShell,
+}
+
+impl HookWorld {
+    fn new() -> Self {
+        Self { home: tmp_dir("gflow-lifecycle-hooks"), shell: MockHookShell::new() }
+    }
+
+    fn env(&self, git: &MockGit, interactive: bool) -> HookEnv<'_> {
+        let approvals_file = self.home.join(".gflow").join(hooks::APPROVALS_FILE);
+        let commands: Vec<(HookEvent, String)> = HookEvent::ALL.iter().map(|e| (*e, on(*e))).collect();
+        for (_, command) in &commands {
+            hooks::approve(&approvals_file, &git.repo_root, command).unwrap();
+        }
+        HookEnv { commands, shell: &self.shell, interactive, approvals_file: Some(approvals_file) }
+    }
+
+    fn fired(&self) -> Fired {
+        self.shell.runs.borrow().iter().map(|r| (r.command.clone(), r.env.clone())).collect()
+    }
+}
+
+fn run_hooked(git: &MockGit, hosting: &MockHosting, env: &HookEnv<'_>, cfg: &RepoConfig, command: Commands) -> Result<(), String> {
+    run(git, hosting, &MockPrompter::new(), &WorktreeEnv { config: &wt_config(), editor: &MockEditor::new(), setup: &MockWorktreeSetup::new(), commands: None }, env, cfg, None, Some(command))
+}
+
+fn fired_once(event: HookEvent, tag: &str, kind: &str, branch: &str) -> Fired {
+    let vars = [("GFLOW_EVENT", event.name()), ("GFLOW_TAG", tag), ("GFLOW_TAG_KIND", kind), ("GFLOW_BRANCH", branch), ("GFLOW_REMOTE", "origin")];
+    vec![(on(event), vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())]
+}
+
+fn start_release_cmd(no_hooks: bool) -> Commands {
+    Commands::Start { kind: StartKind::Release { major: false, minor: true, no_worktree: false, no_hooks } }
+}
+
+fn finish_with(no_hooks: bool) -> Commands {
+    Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: false, no_hooks }
+}
+
+fn rc() -> RepoConfig {
+    RepoConfig::default()
+}
+
+fn patch() -> RepoConfig {
+    RepoConfig { bump_strategy: BumpStrategy::Patch, ..RepoConfig::default() }
+}
+
+fn develop_git() -> MockGit {
+    let mut git = MockGit::with_tmp_git_dir("gflow-lifecycle-hooks-start");
+    git.current_branch = "develop".to_string();
+    git.tags = vec!["v2.4.0".to_string()];
+    git
+}
+
+#[test]
+fn each_event_runs_only_its_own_commands_once_with_its_variables_under_both_strategies() {
+    let release_with = |tags: &[&str]| {
+        let mut git = release_git();
+        git.tags_on_branch = tags.iter().map(|t| t.to_string()).collect();
+        git
+    };
+    let cases: Vec<(&str, MockGit, Commands, RepoConfig, Fired)> = vec![
+        ("start rc", develop_git(), start_release_cmd(false), rc(),
+            fired_once(HookEvent::ReleaseStart, "v2.5.0-rc.1", "rc", "release/2.5.0")),
+        ("start patch", develop_git(), start_release_cmd(false), patch(),
+            fired_once(HookEvent::ReleaseStart, "v2.5.0", "final", "release/2.5.0")),
+        ("bump rc", release_with(&["v2.5.0-rc.1"]), Commands::Bump { no_hooks: false }, rc(),
+            fired_once(HookEvent::ReleaseBump, "v2.5.0-rc.2", "rc", "release/2.5.0")),
+        ("bump patch", release_with(&["v2.5.0"]), Commands::Bump { no_hooks: false }, patch(),
+            fired_once(HookEvent::ReleaseBump, "v2.5.1", "final", "release/2.5.0")),
+        ("finish rc", release_with(&["v2.5.0-rc.1"]), finish_with(false), rc(),
+            fired_once(HookEvent::ReleaseFinish, "v2.5.0", "final", "release/2.5.0")),
+        ("finish patch", release_with(&["v2.5.0", "v2.5.1"]), finish_with(false), patch(),
+            fired_once(HookEvent::ReleaseFinish, "v2.5.1", "final", "release/2.5.0")),
+        ("hotfix rc", hotfix_git(), finish_with(false), rc(),
+            fired_once(HookEvent::HotfixFinish, "v2.5.1", "final", "hotfix/2.5.1")),
+        ("hotfix patch", hotfix_git(), finish_with(false), patch(),
+            fired_once(HookEvent::HotfixFinish, "v2.5.1", "final", "hotfix/2.5.1")),
+    ];
+    for (case, git, command, cfg, expected) in cases {
+        let world = HookWorld::new();
+        let env = world.env(&git, false);
+
+        run_hooked(&git, &MockHosting::new(), &env, &cfg, command).unwrap_or_else(|e| panic!("{case}: {e}"));
+
+        assert_eq!(world.fired(), expected, "{case}");
+        assert!(world.shell.runs.borrow().iter().all(|r| r.cwd == git.repo_root), "{case}");
+        if case == "finish patch" {
+            assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")), "a patch finish pushes no new tag");
+        }
+    }
+}
+
+#[test]
+fn a_work_branch_finish_fires_nothing() {
+    let git = wrongly_squash_checked_feature_git("gflow-lifecycle-hooks-work");
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+    let cmd = Commands::Finish { breaking: None, base: None, abort: false, accept_merge_type: true, no_hooks: false };
+
+    run_hooked(&git, &merged_feature_hosting(), &env, &rc(), cmd).unwrap();
+
+    assert!(world.fired().is_empty());
+    assert!(!git.git_dir.join(hooks::LEDGER_DIR).exists());
+}
+
+#[test]
+fn an_interrupted_finish_fires_nothing_until_its_resume_completes_then_fires_once() {
+    let mut git = release_git();
+    git.fail_nth_merge = Some(1);
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+
+    assert!(run_hooked(&git, &MockHosting::new(), &env, &rc(), finish_with(false)).is_err());
+    assert!(world.fired().is_empty());
+
+    git.fail_nth_merge = None;
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), finish_with(false)).unwrap();
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), finish_with(false)).unwrap();
+
+    assert_eq!(world.fired(), fired_once(HookEvent::ReleaseFinish, "v2.5.0", "final", "release/2.5.0"));
+}
+
+#[test]
+fn a_failed_tag_push_fires_nothing() {
+    let mut git = release_git();
+    git.fail_call = Some(("push_tag:v2.5.0-rc.2".to_string(), 1));
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+
+    let err = run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: false }).unwrap_err();
+
+    assert_eq!(err, "injected git failure: push_tag:v2.5.0-rc.2");
+    assert!(world.fired().is_empty());
+}
+
+#[test]
+fn no_hooks_skips_the_events_commands_for_good() {
+    let mut git = release_git();
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: true }).unwrap();
+    git.tags_on_branch.push("v2.5.0-rc.2".to_string());
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: false }).unwrap();
+
+    assert_eq!(world.fired(), fired_once(HookEvent::ReleaseBump, "v2.5.0-rc.3", "rc", "release/2.5.0"));
+}
+
+#[test]
+fn no_hooks_leaves_an_earlier_pending_event_for_the_next_run() {
+    let mut git = release_git();
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+    let leftover = TagEvent::new(HookEvent::ReleaseStart, &SemVer::parse("v2.5.0-rc.1").unwrap(), "release/2.5.0");
+    Hooks::prepare(&git, &env).unwrap().unwrap().record(&leftover, false).unwrap();
+
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: true }).unwrap();
+    assert!(world.fired().is_empty());
+
+    git.tags_on_branch.push("v2.5.0-rc.2".to_string());
+    run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: false }).unwrap();
+    let commands: Vec<String> = world.fired().into_iter().map(|(c, _)| c).collect();
+    assert_eq!(commands, [on(HookEvent::ReleaseStart), on(HookEvent::ReleaseBump)]);
+}
+
+#[test]
+fn a_failing_hook_leaves_the_finish_complete_and_fails_the_run() {
+    let git = release_git();
+    let mut world = HookWorld::new();
+    world.shell.outcomes.insert(on(HookEvent::ReleaseFinish), Ok(Some(2)));
+    let env = world.env(&git, false);
+
+    let err = run_hooked(&git, &MockHosting::new(), &env, &rc(), finish_with(false)).unwrap_err();
+
+    assert_eq!(err, "1 hook command failed. The release-finish of v2.5.0 itself is complete; rerun each failed command shown above.");
+    assert!(!state_path(&git.git_dir).exists(), "a hook failure is not an incomplete finish step");
+    assert!(git.calls().iter().any(|c| c == "push:develop"), "the finish ran to the end");
+}
+
+#[test]
+fn a_pending_event_from_a_crashed_run_fires_at_the_end_of_the_next_run_even_when_that_run_fails() {
+    let mut git = release_git();
+    git.fail_call = Some(("tags_on_branch:release/2.5.0".to_string(), 1));
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+    let leftover = TagEvent::new(HookEvent::ReleaseStart, &SemVer::parse("v2.5.0-rc.1").unwrap(), "release/2.5.0");
+    Hooks::prepare(&git, &env).unwrap().unwrap().record(&leftover, false).unwrap();
+
+    let err = run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: false }).unwrap_err();
+
+    assert_eq!(err, "injected git failure: tags_on_branch:release/2.5.0");
+    assert_eq!(world.fired(), fired_once(HookEvent::ReleaseStart, "v2.5.0-rc.1", "rc", "release/2.5.0"));
+}
+
+#[test]
+fn an_unapproved_hook_asks_through_the_runs_prompter() {
+    let git = release_git();
+    let shell = MockHookShell::new();
+    let home = tmp_dir("gflow-lifecycle-hooks-ask");
+    let env = HookEnv {
+        commands: vec![(HookEvent::ReleaseBump, "deploy".to_string())],
+        shell: &shell,
+        interactive: true,
+        approvals_file: Some(home.join(".gflow").join(hooks::APPROVALS_FILE)),
+    };
+    let prompter = MockPrompter::new().with_lines(&["y"]);
+
+    run(&git, &MockHosting::new(), &prompter, &WorktreeEnv { config: &wt_config(), editor: &MockEditor::new(), setup: &MockWorktreeSetup::new(), commands: None }, &env, &rc(), None, Some(Commands::Bump { no_hooks: false })).unwrap();
+
+    assert_eq!(prompter.calls(), vec!["prompt_line:Hook for release-bump: deploy\nRun this hook? [y/N]"]);
+    assert_eq!(shell.commands(), vec!["deploy"]);
+}
+
+#[test]
+fn a_run_with_no_hook_keys_makes_no_hook_calls() {
+    let git = release_git();
+
+    run_lifecycle(&git, Some(Commands::Bump { no_hooks: false })).unwrap();
+
+    assert!(!git.calls().iter().any(|c| c == "git_common_dir" || c == "repo_root"), "calls: {:?}", git.calls());
+    assert!(!git.git_dir.join(hooks::LEDGER_DIR).exists());
+}
+
+#[test]
+fn hook_preparation_errors_stop_the_run_before_any_change() {
+    let mut git = release_git();
+    git.fail_call = Some(("git_common_dir".to_string(), 1));
+    let world = HookWorld::new();
+    let env = world.env(&git, false);
+
+    let err = run_hooked(&git, &MockHosting::new(), &env, &rc(), Commands::Bump { no_hooks: false }).unwrap_err();
+
+    assert_eq!(err, "injected git failure: git_common_dir");
+    assert!(!git.calls().iter().any(|c| c.starts_with("create_tag") || c == "fetch"));
 }

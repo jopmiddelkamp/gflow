@@ -1,5 +1,6 @@
 use crate::flows::{announce_version_pr, complete_version_pr, open_versioned_branches, require_clean_tree, run_version_script};
 use crate::git::Git;
+use crate::hooks::{HookEvent, TagEvent};
 use crate::hosting::{HostingPlatform, PrBody};
 use crate::prompt::Prompter;
 use crate::repo_config::{BumpStrategy, Mode, RepoConfig};
@@ -90,12 +91,14 @@ pub fn start_work_branch(git: &dyn Git, prefix: &str, name: &str, from: &str, no
 /// (the version script needs the branch checked out), then the tree returns to
 /// develop and the release opens in its own worktree — or, when a worktree
 /// already holds it, that one is announced.
-pub fn start_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, cfg: &RepoConfig, release_type: Option<ReleaseType>, main_branch: &str, worktree: Option<WorktreeContext<'_>>) -> Result<(), String> {
-    let branch = resolve_or_create_release(git, prompter, hosting, script, cfg, release_type, main_branch, worktree.is_some())?;
+/// Reports `release-start` only when this run cut the release's first tag;
+/// reusing an open release cuts none.
+pub fn start_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, cfg: &RepoConfig, release_type: Option<ReleaseType>, main_branch: &str, worktree: Option<WorktreeContext<'_>>) -> Result<Option<TagEvent>, String> {
+    let (branch, first_tag) = resolve_or_create_release(git, prompter, hosting, script, cfg, release_type, main_branch, worktree.is_some())?;
     if let Some(ctx) = worktree {
         open_container_worktree(git, &ctx, "Release", &branch)?;
     }
-    Ok(())
+    Ok(first_tag.map(|tag| TagEvent::new(HookEvent::ReleaseStart, &tag, &branch)))
 }
 
 pub fn start_release_fix(git: &dyn Git, hosting: &dyn HostingPlatform, cfg: &RepoConfig, main_branch: &str, name: &str, no_checkout: bool, worktree: Option<WorktreeContext<'_>>) -> Result<(), String> {
@@ -145,7 +148,7 @@ fn open_container_worktree(git: &dyn Git, ctx: &WorktreeContext<'_>, label: &str
 /// `hand_off`: the caller will move the release into a worktree, so the current
 /// tree must not be left on it — no checkout of an existing release, and a
 /// return to develop after creating a new one.
-fn resolve_or_create_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, cfg: &RepoConfig, release_type: Option<ReleaseType>, main_branch: &str, hand_off: bool) -> Result<String, String> {
+fn resolve_or_create_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &dyn HostingPlatform, script: Option<&dyn VersionScript>, cfg: &RepoConfig, release_type: Option<ReleaseType>, main_branch: &str, hand_off: bool) -> Result<(String, Option<SemVer>), String> {
     let release_branches = open_versioned_branches(git, hosting, cfg, main_branch, "release")?;
 
     if let Some(branch) = release_branches.first() {
@@ -153,7 +156,7 @@ fn resolve_or_create_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &d
         if !hand_off {
             git.checkout(branch)?;
         }
-        return Ok(branch.to_string());
+        return Ok((branch.to_string(), None));
     }
 
     let latest = find_latest_tag(git)?;
@@ -200,7 +203,7 @@ fn resolve_or_create_release(git: &dyn Git, prompter: &dyn Prompter, hosting: &d
         git.checkout("develop")?;
     }
 
-    Ok(branch)
+    Ok((branch, Some(first_tag)))
 }
 
 /// M2 warn-and-continue advice: how to finish the develop version bump by

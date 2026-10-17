@@ -4,6 +4,12 @@ use common::{MockGit, MockHosting, MockVersionScript};
 use gflow::flows::finish_release::{bump_version, sync_with_develop, finish_release};
 use gflow::hosting::LandedPr;
 use gflow::repo_config::{BumpStrategy, Mode, RepoConfig};
+use gflow::hooks::{HookEvent, TagEvent};
+use gflow::version::SemVer;
+
+fn tag_event(event: HookEvent, tag: &str) -> Option<TagEvent> {
+    Some(TagEvent::new(event, &SemVer::parse(tag).unwrap(), "release/1.1.0"))
+}
 
 fn patch_cfg() -> RepoConfig {
     RepoConfig { bump_strategy: BumpStrategy::Patch, ..RepoConfig::default() }
@@ -39,8 +45,10 @@ fn bump_version_selects_the_next_tag_from_matching_staging_tags() {
         git.tags_on_branch = tags.iter().map(|tag| tag.to_string()).collect();
         let cfg = RepoConfig { bump_strategy, ..RepoConfig::default() };
 
-        bump_version(&git, &MockHosting::new(), None, &cfg, 1, 1)
+        let event = bump_version(&git, &MockHosting::new(), None, &cfg, 1, 1)
             .unwrap_or_else(|error| panic!("{case}: {error}"));
+
+        assert_eq!(event, tag_event(HookEvent::ReleaseBump, tag), "{case}");
 
         assert_eq!(git.calls(), vec![
             "tags_on_branch:release/1.1.0".to_string(),
@@ -57,7 +65,9 @@ fn bump_free_with_script_commits_and_pushes_before_tagging() {
     git.working_tree_clean_seq.get_mut().extend([true, false]);
     let script = MockVersionScript::new();
 
-    bump_version(&git, &MockHosting::new(), Some(&script), &RepoConfig::default(), 1, 1).unwrap();
+    let event = bump_version(&git, &MockHosting::new(), Some(&script), &RepoConfig::default(), 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.0-rc.2"));
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -190,7 +200,9 @@ fn bump_patch_protected_cuts_the_deferred_tag_at_the_merge_commit() {
     git.ancestors.insert(("merge-commit-sha".to_string(), "origin/release/1.1.0".to_string()));
     let script = MockVersionScript::new();
 
-    bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.1"));
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -216,7 +228,9 @@ fn bump_protected_fresh_with_changes_defers_the_tag_to_the_landing_pr() {
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "remote_branch_exists:version/1.1.0-into-release-1.1.0",
@@ -248,7 +262,9 @@ fn bump_protected_fresh_noop_cuts_the_tag_immediately() {
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.0-rc.1"));
 
     assert_eq!(git.calls(), vec![
         "remote_branch_exists:version/1.1.0-into-release-1.1.0",
@@ -284,7 +300,9 @@ fn bump_protected_cuts_the_deferred_tag_at_the_merge_commit_once_the_pr_lands() 
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.0-rc.2"));
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:merge-commit-sha:origin/release/1.1.0",
@@ -357,7 +375,9 @@ fn bump_protected_with_no_script_tags_the_tip_directly() {
     let hosting = MockHosting::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, None, &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, None, &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.0-rc.2"));
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -548,7 +568,8 @@ fn finish_release_creates_clean_tag_from_rc() {
     git.rev_list_count_result = 0;
 
     let hosting = MockHosting::new();
-    finish_release(&git, &hosting, &RepoConfig::default(), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &RepoConfig::default(), 1, 1, "main", None, false).unwrap();
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.0"));
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -622,7 +643,8 @@ fn finish_release_patch_mode_merges_without_tagging() {
     git.rev_list_count_result = 0;
 
     let hosting = MockHosting::new();
-    finish_release(&git, &hosting, &patch_cfg(), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &patch_cfg(), 1, 1, "main", None, false).unwrap();
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.1"));
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -674,7 +696,8 @@ fn protected_patch_finish_opens_main_pr_without_any_tag_machinery() {
     git.pushed_branches.insert("release/1.1.0".to_string());
 
     let hosting = MockHosting::new();
-    finish_release(&git, &hosting, &patch_protected_cfg(), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &patch_protected_cfg(), 1, 1, "main", None, false).unwrap();
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "tags_on_branch:release/1.1.0",
@@ -722,7 +745,9 @@ fn protected_patch_finish_completes_after_both_legs_without_tagging() {
     hosting.merged_prs_to.insert(("release/1.1.0".to_string(), "develop".to_string()), landed("relsha", "mc2"));
     git.parent_counts.insert("mc2".to_string(), 2);
 
-    finish_release(&git, &hosting, &patch_protected_cfg(), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &patch_protected_cfg(), 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.1"));
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:mc1:origin/main",
@@ -851,7 +876,8 @@ fn finish_release_fully_idempotent_no_op_on_second_run() {
     // No entries in existing_local_branches/existing_remote_branches → already deleted
 
     let hosting = MockHosting::new();
-    finish_release(&git, &hosting, &RepoConfig::default(), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &RepoConfig::default(), 1, 1, "main", None, false).unwrap();
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.0"));
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c.starts_with("merge:")), "no merges; calls: {calls:?}");
@@ -962,7 +988,9 @@ fn protected_finish_tags_merge_commit_then_opens_develop_pr() {
     );
     git.parent_counts.insert("mc1".to_string(), 2);
 
-    finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:mc1:origin/main",
@@ -1071,7 +1099,9 @@ fn protected_finish_completes_after_develop_merge() {
     hosting.merged_prs_to.insert(("release/1.1.0".to_string(), "develop".to_string()), landed("relsha", "mc2"));
     git.parent_counts.insert("mc2".to_string(), 2);
 
-    finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &protected_cfg(false), 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.0"));
 
     assert_eq!(git.calls(), vec![
         "is_ancestor:mc1:origin/main",
@@ -1195,7 +1225,9 @@ fn protected_finish_keeps_branch_when_configured() {
     hosting.merged_prs_to.insert(("release/1.1.0".to_string(), "develop".to_string()), landed("relsha", "mc2"));
     git.parent_counts.insert("mc2".to_string(), 2);
 
-    finish_release(&git, &hosting, &protected_cfg(true), 1, 1, "main", None, false).unwrap();
+    let event = finish_release(&git, &hosting, &protected_cfg(true), 1, 1, "main", None, false).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseFinish, "v1.1.0"));
 
     let calls = git.calls();
     assert!(!calls.iter().any(|c| c == "checkout:main"), "keep must skip delete_source_branch's checkout; calls: {calls:?}");
@@ -1808,7 +1840,9 @@ fn bump_protected_merged_pr_with_no_prior_tag_cuts_the_first_rc_at_the_merge_com
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, keep_release_branches: false, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.0-rc.1"));
 
     let calls = git.calls();
     assert!(calls.contains(&"create_tag_at:v1.1.0-rc.1:chore: bump version to v1.1.0-rc.1:merge-commit-sha".to_string()),
@@ -1921,7 +1955,7 @@ fn a_landing_pr_uses_its_explicit_template() {
         "{:?}", hosting.calls());
 }
 
-fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
+fn assert_git_failure<T: std::fmt::Debug>(result: Result<T, String>, git: &MockGit, call: &str) {
     let error = result.expect_err(call);
     assert!(
         error.contains(&format!("injected git failure: {call}")),
@@ -1934,7 +1968,7 @@ fn assert_git_failure(result: Result<(), String>, git: &MockGit, call: &str) {
     );
 }
 
-fn assert_hosting_failure(result: Result<(), String>, hosting: &MockHosting, call: &str) {
+fn assert_hosting_failure<T: std::fmt::Debug>(result: Result<T, String>, hosting: &MockHosting, call: &str) {
     let error = result.expect_err(call);
     assert!(
         error.contains(&format!("injected hosting failure: {call}")),
@@ -2433,7 +2467,9 @@ fn bump_protected_that_merges_its_version_pr_now_tags_the_merge_commit_in_the_sa
     );
     let script = MockVersionScript::new();
 
-    bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &patch_protected_cfg(), 1, 1).unwrap();
+
+    assert_eq!(event, tag_event(HookEvent::ReleaseBump, "v1.1.1"));
 
     let calls = git.calls();
     let after_push = &calls[calls.iter().position(|c| c == "push:version/1.1.1-into-release-1.1.0").unwrap() + 1..];
@@ -2465,7 +2501,9 @@ fn bump_protected_that_cannot_complete_its_version_pr_defers_the_tag_to_a_human_
     let script = MockVersionScript::new();
     let cfg = RepoConfig { mode: Mode::Protected, ..RepoConfig::default() };
 
-    bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&script), &cfg, 1, 1).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(hosting.calls().last().unwrap(), "merge_pr:https://github.com/org/repo/pull/1");
     assert_eq!(git.calls().last().unwrap(), "checkout:release/1.1.0");
@@ -2495,7 +2533,9 @@ fn bump_protected_whose_merge_is_not_visible_yet_defers_the_tag() {
     let (git, mut hosting) = merge_now_bump();
     hosting.landed_on_merge.clear();
 
-    bump_version(&git, &hosting, Some(&MockVersionScript::new()), &patch_protected_cfg(), 1, 1).unwrap();
+    let event = bump_version(&git, &hosting, Some(&MockVersionScript::new()), &patch_protected_cfg(), 1, 1).unwrap();
+
+    assert_eq!(event, None);
 
     assert_eq!(git.calls().last().unwrap(), "fetch");
     assert!(!git.calls().iter().any(|c| c.starts_with("create_tag")));
@@ -2533,4 +2573,22 @@ fn protected_rc_bump_without_a_script_requires_readable_tags() {
         &git,
         call,
     );
+}
+
+#[test]
+fn a_protected_finish_whose_cleanup_fails_reports_no_completed_release() {
+    for strategy in [BumpStrategy::Rc, BumpStrategy::Patch] {
+        let (mut git, hosting) = landed_release();
+        if strategy == BumpStrategy::Patch {
+            git.tags_on_branch = vec!["v1.1.0".into()];
+            git.existing_tags.insert("v1.1.0".into());
+        }
+        git.fail_call = Some(("delete_branch_local:release/1.1.0".into(), 1));
+
+        assert_git_failure(
+            finish_release(&git, &hosting, &protected_cfg_with_strategy(strategy), 1, 1, "main", None, false),
+            &git,
+            "delete_branch_local:release/1.1.0",
+        );
+    }
 }

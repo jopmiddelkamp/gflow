@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::process::{Command, ExitCode};
 
 use clap::Parser;
@@ -8,6 +9,7 @@ use gflow::git::Git;
 use gflow::hosting::detect::{self, Provider};
 use gflow::hosting::devops::AzureDevOps;
 use gflow::hosting::github::GitHub;
+use gflow::hooks::{self, HookEnv, ShellHook};
 use gflow::hosting::{HostingPlatform, SystemCli};
 use gflow::lifecycle;
 use gflow::menu::MenuPrompter;
@@ -83,6 +85,7 @@ fn run(command: Option<Commands>) -> Result<(), String> {
         eprintln!("Warning: {warning}");
     }
     let wt_config = WorktreeConfig::from_settings(&layers.settings);
+    let hook_commands = layers.settings.hooks.clone().unwrap_or_default();
     let repo_cfg = layers.settings.resolve();
     let script_path = version_script::resolve(&root)?;
     let script = script_path.map(|path| ScriptCli::new(path, root.clone()));
@@ -100,12 +103,19 @@ fn run(command: Option<Commands>) -> Result<(), String> {
         commands: setup_commands.as_ref(),
     };
     let prompter = MenuPrompter;
+    let hook_env = HookEnv {
+        commands: hook_commands,
+        shell: &ShellHook,
+        interactive: std::io::stdin().is_terminal(),
+        approvals_file: home.as_ref().map(|home| home.join(".gflow").join(hooks::APPROVALS_FILE)),
+    };
 
     lifecycle::run(
         &git,
         &*hosting,
         &prompter,
         &worktree_env,
+        &hook_env,
         &repo_cfg,
         script.as_ref().map(|s| s as &dyn VersionScript),
         command,
